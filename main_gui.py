@@ -38,7 +38,7 @@ class BMSCalculatorApp:
         self.qw_result_var = tk.StringVar(value="")
         
         # Parameters
-        self.auto_mode_var = tk.BooleanVar(value=False)
+        self.auto_mode_var = tk.BooleanVar(value=True)
         self.params = {
             'alpha': tk.DoubleVar(value=0.7),
             'beta': tk.DoubleVar(value=1.5),
@@ -127,7 +127,7 @@ class BMSCalculatorApp:
                 entry.configure(state='disabled')
             else:
                 self.a_entry = entry
-                ttk.Checkbutton(param_frame, text="Auto", variable=self.auto_mode_var, command=self.toggle_auto_mode).grid(row=row, column=col+3, padx=5)
+                ttk.Checkbutton(param_frame, text="초딸깍 모드", variable=self.auto_mode_var, command=self.toggle_auto_mode).grid(row=row, column=col+3, padx=5)
             # Description
             desc = param_descs.get(key, "")
             ttk.Label(param_frame, text=desc, foreground="gray").grid(row=row, column=col+2, sticky=tk.W, padx=5, pady=2)
@@ -301,6 +301,11 @@ class BMSCalculatorApp:
                 
                 extra_msg = f"({found_a_clear}부터 클리어 가능성이 75% 입니다. 즉 이 차트의 레벨은 {found_a_clear}입니다.)\n"
                 extra_msg += f"({found_a_s_rank}부터 S랭크 가능성이 75% 입니다. 즉 이 차트의 S랭크 레벨은 {found_a_s_rank}입니다.)"
+                
+                # Popup Alert for Super Simple Mode
+                popup_msg = f"이 패턴은 {found_a_clear}렙 정도부터 클리어 하고\n"
+                popup_msg += f"이 패턴은 {found_a_s_rank}렙 정도부터 S랭크 가능합니다."
+                messagebox.showinfo("초딸깍 요약", popup_msg)
             else:
                 result = calc.compute_map_difficulty(
                     metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
