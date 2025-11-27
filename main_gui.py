@@ -38,20 +38,23 @@ class BMSCalculatorApp:
         self.qw_result_var = tk.StringVar(value="")
         
         # Parameters
+        self.auto_mode_var = tk.BooleanVar(value=False)
         self.params = {
-            'alpha': tk.DoubleVar(value=1.0),
-            'beta': tk.DoubleVar(value=1.0),
-            'gamma': tk.DoubleVar(value=1.0),
+            'alpha': tk.DoubleVar(value=0.7),
+            'beta': tk.DoubleVar(value=1.5),
+            'gamma': tk.DoubleVar(value=0.5),
             'delta': tk.DoubleVar(value=1.0),
             'eta': tk.DoubleVar(value=1.0),
-            'theta': tk.DoubleVar(value=1.0),
+            'theta': tk.DoubleVar(value=1.5),
             'lam_L': tk.DoubleVar(value=0.3),
-            'lam_S': tk.DoubleVar(value=0.8),
-            'w_F': tk.DoubleVar(value=1.0),
-            'w_P': tk.DoubleVar(value=1.0),
-            'w_V': tk.DoubleVar(value=0.2),
-            'a': tk.DoubleVar(value=0.0),
-            'k': tk.DoubleVar(value=1.0),
+            'lam_S': tk.DoubleVar(value=0.5),
+            'w_F': tk.DoubleVar(value=0.75),
+            'w_P': tk.DoubleVar(value=0.5),
+            'w_V': tk.DoubleVar(value=-0.1),
+            'a': tk.DoubleVar(value=7),
+            'a': tk.DoubleVar(value=7),
+            'k': tk.DoubleVar(value=0.004),
+            's_offset': tk.DoubleVar(value=3.0),
         }
         
         self._create_widgets()
@@ -105,8 +108,10 @@ class BMSCalculatorApp:
             'w_F': 'Endurance Weight (Overall Stamina)',
             'w_P': 'Burst Peak Weight (Max Difficulty Spike)',
             'w_V': 'Variance Weight (Difficulty Fluctuation)',
-            'a': 'Logistic Model Intercept',
+            'a': '<- 자신의 실력 숫자를 적어주세요. (10K2S 기준)',
+            'a': '<- 자신의 실력 숫자를 적어주세요. (10K2S 기준)',
             'k': 'Logistic Model Slope',
+            's_offset': 'S Rank Difficulty Offset (OD 8)',
         }
 
         # Grid layout for params
@@ -116,7 +121,13 @@ class BMSCalculatorApp:
             # Label
             ttk.Label(param_frame, text=key, font=('bold')).grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
             # Entry
-            ttk.Entry(param_frame, textvariable=var, width=8).grid(row=row, column=col+1, padx=5, pady=2)
+            entry = ttk.Entry(param_frame, textvariable=var, width=8)
+            entry.grid(row=row, column=col+1, padx=5, pady=2)
+            if key != 'a':
+                entry.configure(state='disabled')
+            else:
+                self.a_entry = entry
+                ttk.Checkbutton(param_frame, text="Auto", variable=self.auto_mode_var, command=self.toggle_auto_mode).grid(row=row, column=col+3, padx=5)
             # Description
             desc = param_descs.get(key, "")
             ttk.Label(param_frame, text=desc, foreground="gray").grid(row=row, column=col+2, sticky=tk.W, padx=5, pady=2)
@@ -172,6 +183,12 @@ class BMSCalculatorApp:
         # Result
         ttk.Label(frame, textvariable=self.qw_result_var, font=("Arial", 12), justify="center").pack(side=tk.BOTTOM, pady=10)
         
+    def toggle_auto_mode(self):
+        if self.auto_mode_var.get():
+            self.a_entry.configure(state='disabled')
+        else:
+            self.a_entry.configure(state='normal')
+
     def browse_file(self):
         filename = filedialog.askopenfilename(filetypes=[("Rhythm Game Files", "*.bms *.bme *.osu"), ("BMS Files", "*.bms *.bme"), ("Osu Files", "*.osu"), ("All Files", "*.*")])
         if filename:
@@ -238,15 +255,64 @@ class BMSCalculatorApp:
             # Extract params
             p = {k: v.get() for k, v in self.params.items()}
             
-            result = calc.compute_map_difficulty(
-                metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
-                metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
-                alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
-                lam_L=p['lam_L'], lam_S=p['lam_S'],
-                w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
-                a=p['a'], k=p['k'],
-                duration=duration
-            )
+            if self.auto_mode_var.get():
+                found_a_clear = None
+                found_a_s_rank = None
+                
+                for a_val in range(1, 20):
+                    p['a'] = float(a_val)
+                    result = calc.compute_map_difficulty(
+                        metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
+                        metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
+                        alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
+                        lam_L=p['lam_L'], lam_S=p['lam_S'],
+                        w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
+                        a=p['a'], k=p['k'],
+                        duration=duration,
+                        s_offset=p['s_offset']
+                    )
+                    
+                    if found_a_clear is None and result['S_hat'] >= 0.75:
+                        found_a_clear = a_val
+                        
+                    if found_a_s_rank is None and result['S_rank_prob'] >= 0.75:
+                        found_a_s_rank = a_val
+                        
+                    if found_a_clear is not None and found_a_s_rank is not None:
+                        break
+                
+                # Fallbacks
+                if found_a_clear is None: found_a_clear = 19
+                if found_a_s_rank is None: found_a_s_rank = 19
+                    
+                # Re-run with found_a_clear (or maybe we should show results for the clear level?)
+                # Let's use found_a_clear for the main display
+                p['a'] = float(found_a_clear)
+                result = calc.compute_map_difficulty(
+                    metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
+                    metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
+                    alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
+                    lam_L=p['lam_L'], lam_S=p['lam_S'],
+                    w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
+                    a=p['a'], k=p['k'],
+                    duration=duration,
+                    s_offset=p['s_offset']
+                )
+                
+                extra_msg = f"({found_a_clear}부터 클리어 가능성이 75% 입니다. 즉 이 차트의 레벨은 {found_a_clear}입니다.)\n"
+                extra_msg += f"({found_a_s_rank}부터 S랭크 가능성이 75% 입니다. 즉 이 차트의 S랭크 레벨은 {found_a_s_rank}입니다.)"
+            else:
+                result = calc.compute_map_difficulty(
+                    metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
+                    metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
+                    alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
+                    lam_L=p['lam_L'], lam_S=p['lam_S'],
+                    w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
+                    a=p['a'], k=p['k'],
+                    duration=duration,
+                    s_offset=p['s_offset']
+                )
+                extra_msg = ""
             
             # 4. Display Results
             # Calculate HP9 Max Misses
@@ -260,7 +326,10 @@ class BMSCalculatorApp:
             res_str += f"Burst Peak (P): {result['P']:.2f}\n"
             res_str += f"Raw Difficulty (D0): {result['D0']:.2f}\n"
             res_str += f"Predicted Survival: {result['S_hat']:.2%}\n"
+            res_str += f"Predicted S Rank (OD8): {result['S_rank_prob']:.2%}\n"
             res_str += f"Estimated Level: {result['est_level']} ({result['level_label']})\n"
+            if extra_msg:
+                res_str += f"{extra_msg}\n"
             res_str += "-" * 30 + "\n"
             res_str += f"HP9 Max Misses: {max_misses} (approx)\n"
             res_str += "(Assuming rest are 300s)\n"

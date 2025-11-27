@@ -45,6 +45,19 @@ def calculate_metrics(notes, duration, window_size=1.0):
         count = len(window_notes)
         nps[i] = count / window_size
         
+    # Spike Dampening: Reduce impact of extreme outliers
+    # Calculate stats on non-zero NPS to avoid skewing by silence
+    non_zero_nps = nps[nps > 0]
+    if len(non_zero_nps) > 0:
+        mean_nps = np.mean(non_zero_nps)
+        std_nps = np.std(non_zero_nps)
+        threshold = mean_nps + 3.0 * std_nps
+        
+        # Apply dampening to values above threshold
+        # New = Threshold + (Old - Threshold) * 0.5
+        mask = nps > threshold
+        nps[mask] = threshold + (nps[mask] - threshold) * 0.5
+        
         # 2. LN Strain
         # Sum of active LN duration in this window
         # We need to check all notes that overlap this window, not just start in it.

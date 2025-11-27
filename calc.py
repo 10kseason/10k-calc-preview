@@ -141,6 +141,14 @@ def predict_survival(D0, a, k):
     return float(sigmoid(a - k * D0))
 
 
+def predict_s_rank(D0, a, k, offset):
+    """
+    예측 S랭크 확률 (OD 8 기준)
+    S_prob = σ(a - k * D0 - offset)
+    """
+    return float(sigmoid(a - k * D0 - offset))
+
+
 def target_D0_for_survival(S_target, a, k):
     """
     목표 생존률 S_target일 때의 '임계 난이도' D0* 계산:
@@ -154,48 +162,22 @@ def target_D0_for_survival(S_target, a, k):
 # ----------------------------
 # 5. 레벨 예측 (1~20)
 # ----------------------------
-def estimate_level(P, F, duration):
+def estimate_level(S_hat):
     """
-    Estimate level (1-20) based on Burst Peak (P) and Average Load (F/duration).
+    Estimate level (1-20) based on Survival Probability (S_hat).
+    Formula: Level = 1 + 19 * (1 - S_hat)^1.5
     
-    Heuristic Formula:
-    Level = C1 * P + C2 * (F / duration)
-    
-    Assuming:
-    - P (Peak Load) is dominant factor for difficulty spike.
-    - F/duration (Average Load) represents stamina requirement.
-    
-    Tuning (Example):
-    - Level 1: P ~ 2, Avg ~ 1
-    - Level 10: P ~ 15, Avg ~ 8
-    - Level 20: P ~ 30, Avg ~ 15
-    
-    Let's try linear fit:
-    L = 0.5 * P + 0.5 * Avg
+    Mapping:
+    S_hat = 1.0 -> Level 1
+    S_hat = 0.0 -> Level 20
+    S_hat = 0.3575 -> Level ~11 (Middle)
     """
-    if duration <= 0: return 1
+    # Clamp probability
+    p = max(0.0, min(1.0, S_hat))
     
-    avg_load = F / duration
+    est = 1.0 + 19.0 * ((1.0 - p) ** 1.5)
     
-    # Tuning for 10K High Tier:
-    # Target: Peak 60 / Avg 25 -> Level 20
-    # Target: Peak 25 / Avg 10 -> Level 10 (approx)
-    
-    # Let's try:
-    # 0.25 * 60 + 0.2 * 25 = 15 + 5 = 20. Perfect.
-    # 0.25 * 25 + 0.2 * 10 = 6.25 + 2 = 8.25. A bit low?
-    # Maybe add a base constant? Or adjust weights.
-    # Let's try: Level = 0.28 * P + 0.15 * Avg
-    # 0.28 * 60 + 0.15 * 25 = 16.8 + 3.75 = 20.55 (Clamped to 19/20)
-    # 0.28 * 25 + 0.15 * 10 = 7.0 + 1.5 = 8.5.
-    
-    # Let's stick to the user suggestion or simple fit.
-    # User said: "Just re-calibrate mapping".
-    # Let's use: Level = 0.25 * P + 0.2 * Avg for now.
-    
-    est = 0.25 * P + 0.2 * avg_load
-    
-    # Clamp to 1-20
+    # Clamp to 1-20 just in case
     est = max(1.0, min(20.0, est))
     
     return int(round(est))
@@ -240,11 +222,13 @@ def compute_map_difficulty(
     # 난이도 가중치
     w_F=1.0, w_P=1.0, w_V=0.2,
     # 로지스틱 파라미터 (로그 피팅 결과)
-    a=0.0, k=1.0,
+    # Calibrated for Middle-skilled (Avg 14/Peak 35 @ 120s -> 35.75% Pass)
+    a=7.97, k=0.005,
     # 전체 DB에서 얻은 F/P 퍼센타일 (없으면 None)
     F_rank=None, P_rank=None,
     # Duration for Level Est
     duration=1.0,
+    s_offset=3.0, # Offset for S Rank difficulty
 ):
     """
     1) b_t 계산
@@ -273,9 +257,10 @@ def compute_map_difficulty(
 
     # 4. 생존률 예측
     S_hat = predict_survival(D0, a=a, k=k)
+    S_rank_prob = predict_s_rank(D0, a=a, k=k, offset=s_offset)
     
     # 5. 레벨 예측
-    est_level = estimate_level(P, F, duration)
+    est_level = estimate_level(S_hat)
     level_label = get_level_label(est_level)
 
     return {
@@ -286,6 +271,7 @@ def compute_map_difficulty(
         "ema_S": ema_S,
         "D0": D0,
         "S_hat": S_hat,
+        "S_rank_prob": S_rank_prob,
         "est_level": est_level,
         "level_label": level_label,
     }
