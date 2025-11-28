@@ -5,6 +5,25 @@ import hp_model # Need this for total_difficulty_10k
 # ----------------------------
 # 1. 윈도우별 부하 b_t 계산
 # ----------------------------
+def soft_cap_load(b_t, cap_start=60.0, cap_range=30.0):
+    """
+    부드러운 상한을 주는 soft cap.
+
+    cap_start = T  : 이 값까지는 그대로 사용
+    cap_range = C  : cap_start 위로 최대 cap_range 만큼만 더 올라감
+                     (즉 cap_start + cap_range 근처로 수렴)
+    """
+    b_t = np.asarray(b_t, dtype=float)
+    out = b_t.copy()
+
+    mask = out > cap_start
+    x = out[mask] - cap_start  # 초과분
+
+    # b' = T + (b - T) * C / (C + (b - T))
+    out[mask] = cap_start + x * (cap_range / (cap_range + x))
+    return out
+
+
 def compute_window_load(
     nps,         # np.ndarray, 각 윈도우별 NPS
     ln_strain,   # np.ndarray, 각 윈도우별 LN strain
@@ -18,6 +37,8 @@ def compute_window_load(
     delta=1.0,
     eta=1.0,
     theta=1.0, # Hand Strain Weight
+    cap_start=60.0,
+    cap_range=30.0,
 ):
     """
     b_t = α*NPS_t + β*LNStrain_t + γ*JackPenalty_t + δ*RollPenalty_t + η*AltCost_t + θ*HandStrain_t
@@ -45,6 +66,10 @@ def compute_window_load(
         eta * alt_cost + 
         theta * hand_strain
     )
+    
+    # Soft Cap 적용
+    b_t = soft_cap_load(b_t, cap_start=cap_start, cap_range=cap_range)
+    
     return b_t
 
 
@@ -133,20 +158,59 @@ def logit(p):
     return np.log(p / (1.0 - p))
 
 
-def predict_survival(D0, a, k):
+def predict_survival(D0, a, k, gamma_clear=1.0):
     """
     예측 생존률:
-    S_hat = σ(a - k * D0)
+    기존: S_hat = σ(a - k * D0)
+    수정: S_hat = (σ(a - k * D0)) ** gamma_clear
     """
-    return float(sigmoid(a - k * D0))
+    base = sigmoid(a - k * D0)
+    # 수치 안정성용 살짝 클램프
+    base = max(1e-6, min(1.0 - 1e-6, base))
+    return float(base ** gamma_clear)
 
 
 def predict_s_rank(D0, a, k, offset):
     """
+    [DEPRECATED] Old Offset Model
     예측 S랭크 확률 (OD 8 기준)
     S_prob = σ(a - k * D0 - offset)
     """
     return float(sigmoid(a - k * D0 - offset))
+
+
+def normal_cdf(x: float) -> float:
+    # 표준 정규분포 CDF Φ(x)
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def predict_s_rank_95(D0: float, a: float, k: float,
+                      total_notes: int,
+                      acc_target: float = 0.95) -> float:
+    """
+    10키용 S랭 확률 (정확도 >= acc_target, 기본 95%) 예측
+
+    1) p = σ(a - k * D0)  : 한 노트를 '좋게' 칠 확률
+    2) N = total_notes    : 노트 수
+    3) Acc ~ N(p, p(1-p)/N) 가정
+    4) P(Acc >= acc_target) ≈ Φ( (p - acc_target) / sqrt(p(1-p)/N) )
+    """
+
+    # 1. 한 노트 정확도 확률
+    p = sigmoid(a - k * D0)
+    # 수치 안정성용 클램프
+    eps = 1e-6
+    p = max(min(p, 1.0 - eps), eps)
+
+    # 2. 평균 정확도 분산
+    var_mean = p * (1.0 - p) / max(total_notes, 1)
+    sigma_mean = math.sqrt(var_mean)
+
+    # 3. Z-score
+    z = (p - acc_target) / sigma_mean
+
+    # 4. 표준정규 CDF로 확률 변환
+    return normal_cdf(z)
 
 
 def target_D0_for_survival(S_target, a, k):
@@ -175,10 +239,10 @@ def estimate_level(S_hat):
     # Clamp probability
     p = max(0.0, min(1.0, S_hat))
     
-    est = 1.0 + 19.0 * ((1.0 - p) ** 1.5)
+    est = 1.0 + 24.0 * ((1.0 - p) ** 1.5)
     
-    # Clamp to 1-20 just in case
-    est = max(1.0, min(20.0, est))
+    # Clamp to 1-25 just in case
+    est = max(1.0, min(25.0, est))
     
     return int(round(est))
 
@@ -207,7 +271,8 @@ def get_level_label(level):
     if level < 12: return "중수"
     if level < 14: return "중고수"
     if level < 16: return "고수"
-    return "초고수"
+    if level < 20: return "초고수"
+    return "신"
 
 
 # ----------------------------
@@ -221,6 +286,8 @@ def compute_map_difficulty(
     lam_L=0.3, lam_S=0.8,
     # 난이도 가중치
     w_F=1.0, w_P=1.0, w_V=0.2,
+    # Soft Cap
+    cap_start=60.0, cap_range=30.0,
     # 로지스틱 파라미터 (로그 피팅 결과)
     # Calibrated for Middle-skilled (Avg 14/Peak 35 @ 120s -> 35.75% Pass)
     a=7.97, k=0.005,
@@ -228,7 +295,9 @@ def compute_map_difficulty(
     F_rank=None, P_rank=None,
     # Duration for Level Est
     duration=1.0,
-    s_offset=3.0, # Offset for S Rank difficulty
+    s_offset=3.0, # Offset for S Rank difficulty (Deprecated but kept for compat)
+    total_notes=1000, # Added for Binomial Model
+    gamma_clear=1.0, # Added for Gamma Clear Layer
 ):
     """
     1) b_t 계산
@@ -241,6 +310,7 @@ def compute_map_difficulty(
     b_t = compute_window_load(
         nps, ln_strain, jack_pen, roll_pen, alt_cost, hand_strain,
         alpha=alpha, beta=beta, gamma=gamma, delta=delta, eta=eta, theta=theta,
+        cap_start=cap_start, cap_range=cap_range,
     )
 
     # 2. 엔듀런스 / 버스트
@@ -256,8 +326,9 @@ def compute_map_difficulty(
     )
 
     # 4. 생존률 예측
-    S_hat = predict_survival(D0, a=a, k=k)
-    S_rank_prob = predict_s_rank(D0, a=a, k=k, offset=s_offset)
+    S_hat = predict_survival(D0, a=a, k=k, gamma_clear=gamma_clear)
+    # S_rank_prob = predict_s_rank(D0, a=a, k=k, offset=s_offset) # Old
+    S_rank_prob = predict_s_rank_95(D0, a=a, k=k, total_notes=total_notes, acc_target=0.95)
     
     # 5. 레벨 예측
     est_level = estimate_level(S_hat)

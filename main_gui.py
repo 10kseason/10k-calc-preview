@@ -55,6 +55,9 @@ class BMSCalculatorApp:
             'a': tk.DoubleVar(value=7),
             'k': tk.DoubleVar(value=0.004),
             's_offset': tk.DoubleVar(value=3.0),
+            'gamma_clear': tk.DoubleVar(value=1.3),
+            'cap_start': tk.DoubleVar(value=60.0),
+            'cap_range': tk.DoubleVar(value=30.0),
         }
         
         self._create_widgets()
@@ -112,6 +115,9 @@ class BMSCalculatorApp:
             'a': '<- 자신의 실력 숫자를 적어주세요. (10K2S 기준)',
             'k': 'Logistic Model Slope',
             's_offset': 'S Rank Difficulty Offset (OD 8)',
+            'gamma_clear': 'Clear Prob Pessimism (Higher = Harder)',
+            'cap_start': 'Soft Cap Start (Load Threshold)',
+            'cap_range': 'Soft Cap Range (Max Add above Threshold)',
         }
 
         # Grid layout for params
@@ -259,7 +265,7 @@ class BMSCalculatorApp:
                 found_a_clear = None
                 found_a_s_rank = None
                 
-                for a_val in range(1, 20):
+                for a_val in range(1, 26):
                     p['a'] = float(a_val)
                     result = calc.compute_map_difficulty(
                         metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
@@ -269,7 +275,10 @@ class BMSCalculatorApp:
                         w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
                         a=p['a'], k=p['k'],
                         duration=duration,
-                        s_offset=p['s_offset']
+                        s_offset=p['s_offset'],
+                        total_notes=len(notes),
+                        gamma_clear=p['gamma_clear'],
+                        cap_start=p['cap_start'], cap_range=p['cap_range']
                     )
                     
                     if found_a_clear is None and result['S_hat'] >= 0.75:
@@ -282,8 +291,8 @@ class BMSCalculatorApp:
                         break
                 
                 # Fallbacks
-                if found_a_clear is None: found_a_clear = 19
-                if found_a_s_rank is None: found_a_s_rank = 19
+                if found_a_clear is None: found_a_clear = 25
+                if found_a_s_rank is None: found_a_s_rank = 25
                     
                 # Re-run with found_a_clear (or maybe we should show results for the clear level?)
                 # Let's use found_a_clear for the main display
@@ -296,7 +305,10 @@ class BMSCalculatorApp:
                     w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
                     a=p['a'], k=p['k'],
                     duration=duration,
-                    s_offset=p['s_offset']
+                    s_offset=p['s_offset'],
+                    total_notes=len(notes),
+                    gamma_clear=p['gamma_clear'],
+                    cap_start=p['cap_start'], cap_range=p['cap_range']
                 )
                 
                 extra_msg = f"({found_a_clear}부터 클리어 가능성이 75% 입니다. 즉 이 차트의 레벨은 {found_a_clear}입니다.)\n"
@@ -315,7 +327,10 @@ class BMSCalculatorApp:
                     w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
                     a=p['a'], k=p['k'],
                     duration=duration,
-                    s_offset=p['s_offset']
+                    s_offset=p['s_offset'],
+                    total_notes=len(notes),
+                    gamma_clear=p['gamma_clear'],
+                    cap_start=p['cap_start'], cap_range=p['cap_range']
                 )
                 extra_msg = ""
             
