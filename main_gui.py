@@ -39,6 +39,7 @@ class BMSCalculatorApp:
         
         # Parameters
         self.auto_mode_var = tk.BooleanVar(value=True)
+        self.uncap_level_var = tk.BooleanVar(value=False) # Uncap Level Mode
         self.params = {
             'alpha': tk.DoubleVar(value=0.7),
             'beta': tk.DoubleVar(value=1.5),
@@ -134,6 +135,7 @@ class BMSCalculatorApp:
             else:
                 self.a_entry = entry
                 ttk.Checkbutton(param_frame, text="초딸깍 모드", variable=self.auto_mode_var, command=self.toggle_auto_mode).grid(row=row, column=col+3, padx=5)
+                ttk.Checkbutton(param_frame, text="제한 해제", variable=self.uncap_level_var).grid(row=row, column=col+4, padx=5)
             # Description
             desc = param_descs.get(key, "")
             ttk.Label(param_frame, text=desc, foreground="gray").grid(row=row, column=col+2, sticky=tk.W, padx=5, pady=2)
@@ -265,7 +267,12 @@ class BMSCalculatorApp:
                 found_a_clear = None
                 found_a_s_rank = None
                 
-                for a_val in range(1, 26):
+                # Determine max search level
+                max_search = 26
+                if self.uncap_level_var.get():
+                    max_search = 101 # Search up to 100
+                
+                for a_val in range(1, max_search):
                     p['a'] = float(a_val)
                     result = calc.compute_map_difficulty(
                         metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
@@ -278,7 +285,8 @@ class BMSCalculatorApp:
                         s_offset=p['s_offset'],
                         total_notes=len(notes),
                         gamma_clear=p['gamma_clear'],
-                        cap_start=p['cap_start'], cap_range=p['cap_range']
+                        cap_start=p['cap_start'], cap_range=p['cap_range'],
+                        uncap_level=self.uncap_level_var.get()
                     )
                     
                     if found_a_clear is None and result['S_hat'] >= 0.75:
@@ -291,8 +299,8 @@ class BMSCalculatorApp:
                         break
                 
                 # Fallbacks
-                if found_a_clear is None: found_a_clear = 25
-                if found_a_s_rank is None: found_a_s_rank = 25
+                if found_a_clear is None: found_a_clear = max_search - 1
+                if found_a_s_rank is None: found_a_s_rank = max_search - 1
                     
                 # Re-run with found_a_clear (or maybe we should show results for the clear level?)
                 # Let's use found_a_clear for the main display
@@ -308,7 +316,8 @@ class BMSCalculatorApp:
                     s_offset=p['s_offset'],
                     total_notes=len(notes),
                     gamma_clear=p['gamma_clear'],
-                    cap_start=p['cap_start'], cap_range=p['cap_range']
+                    cap_start=p['cap_start'], cap_range=p['cap_range'],
+                    uncap_level=self.uncap_level_var.get()
                 )
                 
                 extra_msg = f"({found_a_clear}부터 클리어 가능성이 75% 입니다. 즉 이 차트의 레벨은 {found_a_clear}입니다.)\n"
@@ -330,7 +339,8 @@ class BMSCalculatorApp:
                     s_offset=p['s_offset'],
                     total_notes=len(notes),
                     gamma_clear=p['gamma_clear'],
-                    cap_start=p['cap_start'], cap_range=p['cap_range']
+                    cap_start=p['cap_start'], cap_range=p['cap_range'],
+                    uncap_level=self.uncap_level_var.get()
                 )
                 extra_msg = ""
             
