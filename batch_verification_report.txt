@@ -1,0 +1,30 @@
+
+=== Verification Report ===
+MAE (Mean Absolute Error): 2.01
+Bias (Mean Error): 0.17 (Positive = Overestimated, Negative = Underestimated)
+Accuracy (Exact Match): 19.02%
+Accuracy (+-1 Level): 52.72%
+
+=== Worst Outliers (Top 10 Overestimated) ===
+[12 -> 25] (Diff: +13, D0: 78.78) quX̒ނ̂ (_q_Hybris_1010_10.bms)
+[15 -> 25] (Diff: +10, D0: 75.94) GtBƔ̖ (_Iwelfi_10KBOSS.bms)
+[17 -> 25] (Diff: +8, D0: 74.87) Circus Galop - 10K SHD (Collection - Piano Beatmap Set (CircusGalop) [Circus Galop - 10K SHD].bms)
+[9 -> 17] (Diff: +8, D0: 51.50) 2anyFirst [10-NM] (21_10nm.bms)
+[19 -> 25] (Diff: +6, D0: 99.36) 10K HELL CIRCUS (Collection - Piano Beatmap Set (CircusGalop) [10K HELL CIRCUS].bms)
+[19 -> 25] (Diff: +6, D0: 87.68) 4K HELL CIRCUS (Collection - Piano Beatmap Set (CircusGalop) [4K HELL CIRCUS].bms)
+[19 -> 25] (Diff: +6, D0: 93.00) 5K HELL CIRCUS (Collection - Piano Beatmap Set (CircusGalop) [5K HELL CIRCUS].bms)
+[19 -> 25] (Diff: +6, D0: 96.47) 7K HELL CIRCUS (Collection - Piano Beatmap Set (CircusGalop) [7K HELL CIRCUS].bms)
+[13 -> 19] (Diff: +6, D0: 56.88) Circus Galop - 10K HD (Collection - Piano Beatmap Set (CircusGalop) [Circus Galop - 10K HD].bms)
+[4 -> 10] (Diff: +6, D0: 28.59) Hungarian Rhapsody - 10K EZ (Collection - Piano Beatmap Set (CircusGalop) [Hungarian Rhapsody - 10K EZ].bms)
+
+=== Worst Outliers (Top 10 Underestimated) ===
+[18 -> 11] (Diff: -7, D0: 31.91) William Tell - 10K EX (Collection - Piano Beatmap Set (CircusGalop) [William Tell - 10K EX].bms)
+[18 -> 11] (Diff: -7, D0: 30.05) William Tell - 4K EX (Collection - Piano Beatmap Set (CircusGalop) [William Tell - 4K EX].bms)
+[18 -> 11] (Diff: -7, D0: 31.28) William Tell - 5K EX (Collection - Piano Beatmap Set (CircusGalop) [William Tell - 5K EX].bms)
+[18 -> 11] (Diff: -7, D0: 29.99) William Tell - 7K EX (Collection - Piano Beatmap Set (CircusGalop) [William Tell - 7K EX].bms)
+[18 -> 12] (Diff: -6, D0: 35.61) uzo[Y [10K BOSS] (_soumaimusou_10ever.bms)
+[16 -> 11] (Diff: -5, D0: 32.59) Etude for the Sinners - 10K EX (Ice (Trolled) - Etude for the Sinners (CircusGalop) [10K EX].bms)
+[16 -> 11] (Diff: -5, D0: 32.58) Rachmaninov Concerto No.3 - 4K EX (Collection - Piano Beatmap Set (CircusGalop) [Rachmaninov Concerto No.3 - 4K EX].bms)
+[14 -> 9] (Diff: -5, D0: 25.96) Bliss [10K BOSS] (litmus_bliss_1010insane.bms)
+[14 -> 9] (Diff: -5, D0: 26.51) 道しるべ (pw_10K_insane.bms)
+[17 -> 12] (Diff: -5, D0: 35.20) 白の魔法の光 (10K EX) (1010_light of White_magic_EX.bms)

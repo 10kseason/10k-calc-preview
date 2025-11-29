@@ -37,26 +37,31 @@ class BMSCalculatorApp:
         self.qw_pr = tk.IntVar(value=0)
         self.qw_result_var = tk.StringVar(value="")
         
+        # HP Mode Vars
+        self.hp_mode_var = tk.StringVar(value="hp9") # hp9, osu, bms_total
+        self.file_hp_drain = 8.0 # Default
+        self.file_total_val = 160.0 # Default
+        self.file_total_notes = 1000 # Default placeholder
+        
         # Parameters
         self.auto_mode_var = tk.BooleanVar(value=True)
         self.uncap_level_var = tk.BooleanVar(value=False) # Uncap Level Mode
         self.params = {
-            'alpha': tk.DoubleVar(value=0.7),
-            'beta': tk.DoubleVar(value=1.5),
-            'gamma': tk.DoubleVar(value=0.5),
+            'alpha': tk.DoubleVar(value=0.8),
+            'beta': tk.DoubleVar(value=1.0),
+            'gamma': tk.DoubleVar(value=1.0),
             'delta': tk.DoubleVar(value=1.0),
-            'eta': tk.DoubleVar(value=1.0),
-            'theta': tk.DoubleVar(value=1.5),
+            'eta': tk.DoubleVar(value=0.5),
+            'theta': tk.DoubleVar(value=0.5),
             'lam_L': tk.DoubleVar(value=0.3),
-            'lam_S': tk.DoubleVar(value=0.5),
-            'w_F': tk.DoubleVar(value=0.75),
-            'w_P': tk.DoubleVar(value=0.5),
+            'lam_S': tk.DoubleVar(value=0.8),
+            'w_F': tk.DoubleVar(value=1.0),
+            'w_P': tk.DoubleVar(value=1.0),
             'w_V': tk.DoubleVar(value=-0.1),
-            'a': tk.DoubleVar(value=7),
-            'a': tk.DoubleVar(value=7),
-            'k': tk.DoubleVar(value=0.004),
+            'a': tk.DoubleVar(value=1.64),
+            'k': tk.DoubleVar(value=0.250),
             's_offset': tk.DoubleVar(value=3.0),
-            'gamma_clear': tk.DoubleVar(value=1.3),
+            'gamma_clear': tk.DoubleVar(value=1.0),
             'cap_start': tk.DoubleVar(value=60.0),
             'cap_range': tk.DoubleVar(value=30.0),
         }
@@ -75,7 +80,7 @@ class BMSCalculatorApp:
         
         # Tab 2: HP Calculator
         self.tab_hp = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_hp, text="HP Calculator (Qwilight)")
+        self.notebook.add(self.tab_hp, text="HP Calculator (Legacy)")
         self._create_hp_tab(self.tab_hp)
         
         # Status Bar
@@ -178,12 +183,20 @@ class BMSCalculatorApp:
         right_frame = ttk.LabelFrame(frame, text="Qwilight Judgments", padding="10")
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10)
         
+        # HP Mode Selection
+        mode_frame = ttk.Frame(right_frame)
+        mode_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=5)
+        ttk.Label(mode_frame, text="HP Mode:").pack(side=tk.LEFT)
+        ttk.Radiobutton(mode_frame, text="HP9 (Fixed)", variable=self.hp_mode_var, value="hp9").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="Osu (Nomod)", variable=self.hp_mode_var, value="osu").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="BMS Total", variable=self.hp_mode_var, value="bms_total").pack(side=tk.LEFT, padx=5)
+        
         labels = ["PGREAT (피그렛)", "PERFECT (퍼펙)", "GREAT (그레)", "GOOD (굿)", "BAD (배드)", "POOR/MISS (푸어)"]
         vars = [self.qw_pg, self.qw_pf, self.qw_gr, self.qw_gd, self.qw_bd, self.qw_pr]
         
         for i, (lbl, var) in enumerate(zip(labels, vars)):
-            ttk.Label(right_frame, text=lbl, width=20, anchor="e").grid(row=i, column=0, padx=5, pady=5)
-            ttk.Entry(right_frame, textvariable=var, width=10).grid(row=i, column=1, padx=5, pady=5)
+            ttk.Label(right_frame, text=lbl, width=20, anchor="e").grid(row=i+1, column=0, padx=5, pady=5)
+            ttk.Entry(right_frame, textvariable=var, width=10).grid(row=i+1, column=1, padx=5, pady=5)
             
         # Calculate Button
         ttk.Button(frame, text="Calculate Total Difficulty", command=self.calculate_total_diff).pack(side=tk.BOTTOM, pady=20)
@@ -226,6 +239,15 @@ class BMSCalculatorApp:
                 messagebox.showwarning("Warning", "No notes found in file.")
                 self.status_var.set("Ready")
                 return
+
+            # Extract Metadata for HP
+            self.file_total_notes = len(notes)
+            if hasattr(parser, 'header'):
+                self.file_hp_drain = parser.header.get('HPDrainRate', 8.0)
+                self.file_total_val = parser.header.get('TOTAL', 160.0)
+            else:
+                self.file_hp_drain = 8.0
+                self.file_total_val = 160.0
                 
             self.status_var.set("Calculating Metrics...")
             self.root.update()
@@ -264,47 +286,15 @@ class BMSCalculatorApp:
             p = {k: v.get() for k, v in self.params.items()}
             
             if self.auto_mode_var.get():
-                found_a_clear = None
-                found_a_s_rank = None
+                # Auto Mode: Now just runs calculation once.
+                # The level is estimated directly from D0 in calc.py.
+                # We don't need to search for 'a' anymore because 'a' (player skill) 
+                # is no longer used for level estimation in the new Direct D0 model.
+                # However, 'a' might still be used for S_hat (legacy) or other things?
+                # Actually, S_hat is disabled.
+                # So 'a' parameter is effectively unused for Level Estimation.
                 
-                # Determine max search level
-                max_search = 26
-                if self.uncap_level_var.get():
-                    max_search = 101 # Search up to 100
-                
-                for a_val in range(1, max_search):
-                    p['a'] = float(a_val)
-                    result = calc.compute_map_difficulty(
-                        metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
-                        metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
-                        alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
-                        lam_L=p['lam_L'], lam_S=p['lam_S'],
-                        w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
-                        a=p['a'], k=p['k'],
-                        duration=duration,
-                        s_offset=p['s_offset'],
-                        total_notes=len(notes),
-                        gamma_clear=p['gamma_clear'],
-                        cap_start=p['cap_start'], cap_range=p['cap_range'],
-                        uncap_level=self.uncap_level_var.get()
-                    )
-                    
-                    if found_a_clear is None and result['S_hat'] >= 0.75:
-                        found_a_clear = a_val
-                        
-                    if found_a_s_rank is None and result['S_rank_prob'] >= 0.75:
-                        found_a_s_rank = a_val
-                        
-                    if found_a_clear is not None and found_a_s_rank is not None:
-                        break
-                
-                # Fallbacks
-                if found_a_clear is None: found_a_clear = max_search - 1
-                if found_a_s_rank is None: found_a_s_rank = max_search - 1
-                    
-                # Re-run with found_a_clear (or maybe we should show results for the clear level?)
-                # Let's use found_a_clear for the main display
-                p['a'] = float(found_a_clear)
+                # Just run once with current params
                 result = calc.compute_map_difficulty(
                     metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
                     metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
@@ -320,12 +310,11 @@ class BMSCalculatorApp:
                     uncap_level=self.uncap_level_var.get()
                 )
                 
-                extra_msg = f"({found_a_clear}부터 클리어 가능성이 75% 입니다. 즉 이 차트의 레벨은 {found_a_clear}입니다.)\n"
-                extra_msg += f"({found_a_s_rank}부터 S랭크 가능성이 75% 입니다. 즉 이 차트의 S랭크 레벨은 {found_a_s_rank}입니다.)"
+                est_level = result['est_level']
+                extra_msg = f"(Direct D0 Mapping: Level {est_level})"
                 
                 # Popup Alert for Super Simple Mode
-                popup_msg = f"이 패턴은 {found_a_clear}렙 정도부터 클리어 하고\n"
-                popup_msg += f"이 패턴은 {found_a_s_rank}렙 정도부터 S랭크 가능합니다."
+                popup_msg = f"이 패턴의 추정 레벨은 {est_level} 입니다."
                 messagebox.showinfo("초딸깍 요약", popup_msg)
             else:
                 result = calc.compute_map_difficulty(
@@ -355,8 +344,8 @@ class BMSCalculatorApp:
             res_str += f"Endurance (F): {result['F']:.2f}\n"
             res_str += f"Burst Peak (P): {result['P']:.2f}\n"
             res_str += f"Raw Difficulty (D0): {result['D0']:.2f}\n"
-            res_str += f"Predicted Survival: {result['S_hat']:.2%}\n"
-            res_str += f"Predicted S Rank (OD8): {result['S_rank_prob']:.2%}\n"
+            # res_str += f"Predicted Survival: {result['S_hat']:.2%}\n"
+            # res_str += f"Predicted S Rank (OD8): {result['S_rank_prob']:.2%}\n"
             res_str += f"Estimated Level: {result['est_level']} ({result['level_label']})\n"
             if extra_msg:
                 res_str += f"{extra_msg}\n"
@@ -399,8 +388,54 @@ class BMSCalculatorApp:
                 n_gr=self.qw_gr.get(),
                 n_gd=self.qw_gd.get(),
                 n_bd=self.qw_bd.get(),
-                n_poor=self.qw_pr.get()
+                n_poor=self.qw_pr.get(),
+                # Dynamic HP Params
+                hp_start=10.0, # Default start?
             )
+            
+            # Recalculate HP End using correct mode
+            hp_end = hp_model.hp9_from_qwilight(
+                n_pg=self.qw_pg.get(),
+                n_pf=self.qw_pf.get(),
+                n_gr=self.qw_gr.get(),
+                n_gd=self.qw_gd.get(),
+                n_bd=self.qw_bd.get(),
+                n_poor=self.qw_pr.get(),
+                hp_start=10.0 if self.hp_mode_var.get() != 'osu' else 10.0, # Osu starts full? Our model handles it.
+                mode=self.hp_mode_var.get(),
+                hp_drain=self.file_hp_drain,
+                total_val=self.file_total_val,
+                total_notes=self.file_total_notes
+            )
+            
+            # Update result dictionary manually since total_difficulty_10k uses fixed HP9
+            res['hp_end'] = hp_end
+            
+            # Recalculate Factor
+            # HP Factor logic needs to adapt to mode?
+            # For now, let's keep the factor logic based on "Surviving HP9" scale.
+            # If mode is Osu/BMS, we normalized output to be >0 = Clear.
+            # So we can map it similarly.
+            # HP9: Max ~20? End > 0.
+            # Osu: Max 10. End > 0.
+            # BMS: Max 100? End > 0 (Shifted).
+            
+            # Let's normalize hp_end to [0, 1] relative to max possible?
+            # Or just use the sign.
+            # Existing factor: m = hp_end / hp_start.
+            # If hp_end is large positive -> Easy.
+            
+            hp_start_val = 10.0
+            if self.hp_mode_var.get() == 'bms_total':
+                hp_start_val = 20.0 # BMS starts at 20 usually? But we shifted result.
+                # Result is (Gauge - 80). Max gauge 100 -> Max result 20.
+                # Min gauge 0 -> Min result -80.
+                # So range is similar to HP9 (10 to -10).
+                pass
+            
+            res['hp_factor'] = calc.hp_difficulty_factor_from_hp9(hp_end, hp_start=hp_start_val)
+            res['total_diff'] = res['pattern_diff'] * res['hp_factor']
+            res['level'] = math.sqrt(res['total_diff'])
             
             status = "SURVIVED" if res['hp_end'] > 0 else "FAILED"
             

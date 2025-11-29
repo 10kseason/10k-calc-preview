@@ -35,6 +35,10 @@ class OsuParser:
                     val = val.strip()
                     if key == 'CircleSize':
                         self.key_count = int(float(val))
+                    elif key == 'HPDrainRate':
+                        self.header['HPDrainRate'] = float(val)
+                    elif key == 'OverallDifficulty':
+                        self.header['OverallDifficulty'] = float(val)
                         
             elif section == 'HitObjects':
                 # x,y,time,type,hitSound,objectParams,hitSample

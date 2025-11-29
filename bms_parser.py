@@ -73,6 +73,11 @@ class BMSParser:
                          self.stop_definitions[stop_id] = float(value)
                      except ValueError:
                          pass
+                elif key == 'TOTAL':
+                    try:
+                        self.header['TOTAL'] = float(value)
+                    except ValueError:
+                        pass
                 else:
                     self.header[key] = value
 

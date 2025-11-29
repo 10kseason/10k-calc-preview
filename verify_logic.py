@@ -38,7 +38,7 @@ def verify():
     print("\n[3] Testing Difficulty Calculation...")
     result = calc.compute_map_difficulty(
         metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
-        metrics['roll_pen'], metrics['alt_cost']
+        metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain']
     )
     
     print("Difficulty Results:")

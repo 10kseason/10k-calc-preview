@@ -25,6 +25,7 @@ def calculate_metrics(notes, duration, window_size=1.0):
     jack_pen = np.zeros(num_windows)
     roll_pen = np.zeros(num_windows)
     alt_cost = np.zeros(num_windows)
+    hand_strain = np.zeros(num_windows)
     
     # Pre-process notes into windows for faster access
     windows = [[] for _ in range(num_windows)]
@@ -40,9 +41,13 @@ def calculate_metrics(notes, duration, window_size=1.0):
         start_time = i * window_size
         end_time = (i + 1) * window_size
         
-        # 1. NPS (Notes Per Second)
-        # Count notes starting in this window
-        count = len(window_notes)
+        # 1. NPS (Notes Per Second) -> Action NPS (Chords = 1 Action)
+        # Count unique timestamps in this window
+        unique_times = set(n['time'] for n in window_notes)
+        count = len(unique_times)
+        
+        # Optional: Slight bonus for chord size?
+        # For now, pure Action NPS is safer for 10K Piano charts.
         nps[i] = count / window_size
         
     # Spike Dampening: Reduce impact of extreme outliers
@@ -169,44 +174,48 @@ def calculate_metrics(notes, duration, window_size=1.0):
     # Placeholder: 10% of NPS if Jack is low.
     roll_pen = nps * 0.1 
     
-    # 5. Alt Cost & Hand Strain
-    # Cost if one hand is overloaded.
-    # Detect if DP (max column > 7)
+    # 5. Alt Cost & Hand Strain (Action-based)
+    # Instead of counting notes, we count "actions" (unique timestamps) per hand.
+    
     max_col = 0
     for note in notes:
         max_col = max(max_col, note['column'])
-    
     is_dp = max_col > 7
-    
-    hand_strain = np.zeros(num_windows)
 
     for i in range(num_windows):
         w_notes = windows[i]
-        l_count = 0
-        r_count = 0
+        
+        l_timestamps = set()
+        r_timestamps = set()
         
         if is_dp:
             # DP Mode: 1P Side (0-7) vs 2P Side (8-15)
             for note in w_notes:
                 c = note['column']
-                if c <= 7: l_count += 1
-                else: r_count += 1
+                t = note['time']
+                if c <= 7: l_timestamps.add(t)
+                else: r_timestamps.add(t)
         else:
             # SP Mode: Left (1,2,3) vs Right (5,6,7)
             for note in w_notes:
                 c = note['column']
-                if c in [1, 2, 3]: l_count += 1
-                elif c in [5, 6, 7]: r_count += 1
-                # 4 and 0 (Scratch) are neutral/middle? 
-                # Actually Scratch is usually one hand.
-                # Let's keep simple SP logic for now.
+                t = note['time']
+                if c in [0, 1, 2, 3]: l_timestamps.add(t)
+                elif c in [5, 6, 7]: r_timestamps.add(t)
+                elif c == 4: 
+                    if len(l_timestamps) <= len(r_timestamps):
+                        l_timestamps.add(t)
+                    else:
+                        r_timestamps.add(t)
             
-        diff = abs(l_count - r_count)
+        l_actions = len(l_timestamps)
+        r_actions = len(r_timestamps)
+        
+        diff = abs(l_actions - r_actions)
         alt_cost[i] = diff / window_size
         
-        # Hand Strain: Max NPS of either hand
-        # This captures "one hand burst" even if total NPS is moderate
-        hand_strain[i] = max(l_count, r_count) / window_size
+        # Hand Strain: Max Actions Per Second of either hand
+        hand_strain[i] = max(l_actions, r_actions) / window_size
         
     return {
         'nps': nps,
