@@ -1,4 +1,4 @@
-# BMS Difficulty Calculator (Antigravity v0.1)
+# BMS Difficulty Calculator (10K calc v0.1)
 
 A scientifically calibrated difficulty calculator for 10-key rhythm game charts (BMS/Osu!mania).
 
@@ -32,3 +32,4 @@ A scientifically calibrated difficulty calculator for 10-key rhythm game charts 
 
 ## Credits
 Developed by gemini & User.
+
