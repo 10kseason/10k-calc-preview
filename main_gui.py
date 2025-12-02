@@ -3,6 +3,7 @@ from tkinter import filedialog, ttk, messagebox
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import sys
 
 # Import our modules
 import bms_parser
@@ -16,6 +17,11 @@ class BMSCalculatorApp:
         self.root = root
         self.root.title("BMS Difficulty Calculator")
         self.root.geometry("1000x800")
+        
+        # Developer Mode Flag
+        self.is_dev_mode = "--dev" in sys.argv
+        if self.is_dev_mode:
+            self.root.title("BMS Difficulty Calculator (Developer Mode)")
         
         # Variables
         self.file_path = tk.StringVar()
@@ -39,34 +45,70 @@ class BMSCalculatorApp:
         
         # HP Mode Vars
         self.hp_mode_var = tk.StringVar(value="hp9") # hp9, osu, bms_total
-        self.file_hp_drain = 8.0 # Default
-        self.file_total_val = 160.0 # Default
-        self.file_total_notes = 1000 # Default placeholder
         
         # Parameters
         self.auto_mode_var = tk.BooleanVar(value=True)
         self.uncap_level_var = tk.BooleanVar(value=False) # Uncap Level Mode
-        self.params = {
-            'alpha': tk.DoubleVar(value=0.8),
-            'beta': tk.DoubleVar(value=1.0),
-            'gamma': tk.DoubleVar(value=1.0),
-            'delta': tk.DoubleVar(value=1.0),
-            'eta': tk.DoubleVar(value=0.5),
-            'theta': tk.DoubleVar(value=0.5),
-            'lam_L': tk.DoubleVar(value=0.3),
-            'lam_S': tk.DoubleVar(value=0.8),
-            'w_F': tk.DoubleVar(value=1.0),
-            'w_P': tk.DoubleVar(value=1.0),
-            'w_V': tk.DoubleVar(value=-0.1),
-            'a': tk.DoubleVar(value=1.64),
-            'k': tk.DoubleVar(value=0.250),
-            's_offset': tk.DoubleVar(value=3.0),
-            'gamma_clear': tk.DoubleVar(value=1.0),
-            'cap_start': tk.DoubleVar(value=60.0),
-            'cap_range': tk.DoubleVar(value=30.0),
+        
+        # Default Parameters (Manual Tuned)
+        self.params_manual = {
+            'alpha': 0.8, 'beta': 1.0, 'gamma': 1.0, 'delta': 1.0, 'eta': 0.5, 'theta': 0.5,
+            'omega': 1.5, # [NEW] Chord Weight
+            'lam_L': 0.3, 'lam_S': 0.8,
+            'w_F': 1.0, 'w_P': 1.0, 'w_V': 0.2,
+            'a': 1.64, 'k': 0.250,
+            's_offset': 3.0,
+            'gamma_clear': 1.0,
+            'cap_start': 60.0, 'cap_range': 30.0,
+            'D_min': 0.0,     # [NEW] Level 1 Reference
+            'D_max': 75.0,    # [NEW] Level 25 Reference
+            'gamma_curve': 1.0 # [NEW] Level Curve Shape
         }
         
+        # Scientifically Optimized Parameters (Antigravity v0.1)
+        # Calibrated on GCS/10k2s Dataset (MAE 1.70)
+        self.params_optimized = {
+            'alpha': 0.45,
+            'beta': 1.0,      # Fixed
+            'gamma': 1.0,     # Fixed
+            'delta': 1.0,     # Fixed
+            'eta': 0.25,
+            'theta': 1.101,
+            'omega': 1.75,
+            'lam_L': 0.4,
+            'lam_S': 0.65,
+            'w_F': 1.0, 'w_P': 1.0, 'w_V': 0.2,
+            'a': 1.64, 'k': 0.250,
+            's_offset': 0.0,
+            'gamma_clear': 1.0,
+            'cap_start': 60.0, 'cap_range': 30.0,
+            'D_min': 11.52,   # Calibrated
+            'D_max': 185.91,  # Calibrated
+            'gamma_curve': 0.467 # Calibrated
+        }
+        
+        # Current Params (Linked to UI)
+        self.params = {k: tk.DoubleVar(value=v) for k, v in self.params_manual.items()}
+        
+        self.use_optimized_var = tk.BooleanVar(value=True) # Default to Optimized in User Mode
+        if self.is_dev_mode:
+            self.use_optimized_var.set(False) # Manual default in Dev Mode
+        
+        # Apply optimized weights by default if not dev mode
+        if not self.is_dev_mode:
+            self.toggle_optimized_weights()
+            
         self._create_widgets()
+
+    def toggle_optimized_weights(self):
+        if self.use_optimized_var.get():
+            target = self.params_optimized
+        else:
+            target = self.params_manual
+            
+        for k, v in target.items():
+            if k in self.params:
+                self.params[k].set(v)
         
     def _create_widgets(self):
         # Notebook (Tabs)
@@ -100,55 +142,84 @@ class BMSCalculatorApp:
         mid_frame = ttk.Frame(parent, padding="10")
         mid_frame.pack(fill=tk.X)
         
-        # Parameters Group
-        param_frame = ttk.LabelFrame(mid_frame, text="Parameters", padding="10")
-        param_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # Parameter Descriptions
-        param_descs = {
-            'alpha': 'NPS Weight (Note Density)',
-            'beta': 'LN Strain Weight (Long Notes)',
-            'gamma': 'Jack Penalty Weight (Repeated Notes)',
-            'delta': 'Roll Penalty Weight (Patterns)',
-            'eta': 'Alt Cost Weight (Hand Balance)',
-            'theta': 'Hand Strain Weight (One Hand Density)',
-            'lam_L': 'Endurance EMA Lambda (Lower = Longer Memory)',
-            'lam_S': 'Burst EMA Lambda (Higher = Faster Reaction)',
-            'w_F': 'Endurance Weight (Overall Stamina)',
-            'w_P': 'Burst Peak Weight (Max Difficulty Spike)',
-            'w_V': 'Variance Weight (Difficulty Fluctuation)',
-            'a': '<- 자신의 실력 숫자를 적어주세요. (10K2S 기준)',
-            'a': '<- 자신의 실력 숫자를 적어주세요. (10K2S 기준)',
-            'k': 'Logistic Model Slope',
-            's_offset': 'S Rank Difficulty Offset (OD 8)',
-            'gamma_clear': 'Clear Prob Pessimism (Higher = Harder)',
-            'cap_start': 'Soft Cap Start (Load Threshold)',
-            'cap_range': 'Soft Cap Range (Max Add above Threshold)',
-        }
-
-        # Grid layout for params
-        row = 0
-        col = 0
-        for key, var in self.params.items():
-            # Label
-            ttk.Label(param_frame, text=key, font=('bold')).grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
-            # Entry
-            entry = ttk.Entry(param_frame, textvariable=var, width=8)
-            entry.grid(row=row, column=col+1, padx=5, pady=2)
-            if key != 'a':
-                entry.configure(state='disabled')
-            else:
-                self.a_entry = entry
-                ttk.Checkbutton(param_frame, text="초딸깍 모드", variable=self.auto_mode_var, command=self.toggle_auto_mode).grid(row=row, column=col+3, padx=5)
-                ttk.Checkbutton(param_frame, text="제한 해제", variable=self.uncap_level_var).grid(row=row, column=col+4, padx=5)
-            # Description
-            desc = param_descs.get(key, "")
-            ttk.Label(param_frame, text=desc, foreground="gray").grid(row=row, column=col+2, sticky=tk.W, padx=5, pady=2)
+        if self.is_dev_mode:
+            # Parameters Group (Developer Only)
+            param_frame = ttk.LabelFrame(mid_frame, text="Parameters (Developer Mode)", padding="10")
+            param_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             
-            row += 1
-            if row > 5:
-                row = 0
-                col += 3 # Move to next set of columns (Label, Entry, Desc)
+            # Parameter Descriptions
+            param_descs = {
+                'alpha': 'NPS Weight (Note Density)',
+                'beta': 'LN Strain Weight (Long Notes)',
+                'gamma': 'Jack Penalty Weight (Repeated Notes)',
+                'delta': 'Roll Penalty Weight (Patterns)',
+                'eta': 'Alt Cost Weight (Hand Balance)',
+                'theta': 'Hand Strain Weight (One Hand Density)',
+                'omega': 'Chord Weight (Chord Thickness)', # [NEW]
+                'lam_L': 'Endurance EMA Lambda (Lower = Longer Memory)',
+                'lam_S': 'Burst EMA Lambda (Higher = Faster Reaction)',
+                'w_F': 'Endurance Weight (Overall Stamina)',
+                'w_P': 'Burst Peak Weight (Max Difficulty Spike)',
+                'w_V': 'Variance Weight (Difficulty Fluctuation)',
+                'a': '<- 자신의 실력 숫자를 적어주세요. (10K2S 기준)',
+                'k': 'Logistic Model Slope',
+                's_offset': 'S Rank Difficulty Offset (OD 8)',
+                'gamma_clear': 'Clear Prob Pessimism (Higher = Harder)',
+                'cap_start': 'Soft Cap Start (Load Threshold)',
+                'cap_range': 'Soft Cap Range (Max Add above Threshold)',
+                'D_min': 'Level 1 D0 Reference',
+                'D_max': 'Level 25 D0 Reference',
+                'gamma_curve': 'Level Curve Gamma (>1 = Harder High Lv)',
+            }
+
+            # Grid layout for params
+            row = 0
+            col = 0
+            for key, var in self.params.items():
+                # Label
+                ttk.Label(param_frame, text=key, font=('bold')).grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+                # Entry
+                entry = ttk.Entry(param_frame, textvariable=var, width=8)
+                entry.grid(row=row, column=col+1, padx=5, pady=2)
+                if key != 'a':
+                    entry.configure(state='disabled')
+                else:
+                    self.a_entry = entry
+                    ttk.Checkbutton(param_frame, text="초딸깍 모드", variable=self.auto_mode_var, command=self.toggle_auto_mode).grid(row=row, column=col+3, padx=5)
+                    ttk.Checkbutton(param_frame, text="제한 해제", variable=self.uncap_level_var).grid(row=row, column=col+4, padx=5)
+                    ttk.Checkbutton(param_frame, text="최적화 가중치 사용", variable=self.use_optimized_var, command=self.toggle_optimized_weights).grid(row=row, column=col+5, padx=5)
+                # Description
+                desc = param_descs.get(key, "")
+                ttk.Label(param_frame, text=desc, foreground="gray").grid(row=row, column=col+2, sticky=tk.W, padx=5, pady=2)
+                
+                row += 1
+                if row > 5:
+                    row = 0
+                    col += 3 # Move to next set of columns (Label, Entry, Desc)
+        else:
+            # User Mode: Simple Guide
+            guide_frame = ttk.LabelFrame(mid_frame, text="사용 가이드", padding="10")
+            guide_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            
+            guide_text = (
+                "1. 상단의 'Browse' 버튼을 눌러 BMS/Osu 파일을 선택하세요.\n"
+                "2. 'Calculate' 버튼을 누르면 난이도가 계산됩니다.\n"
+                "3. 결과는 우측 텍스트 박스와 하단 그래프에 표시됩니다.\n\n"
+                "* 최적화 모델 설명:\n"
+                "  1. 수천 개의 차트 데이터를 학습하여 노트 밀도, 패턴, 체력 소모를 정밀 분석합니다.\n"
+                "  2. 잭, 롱노트, 동시치기 등 다양한 요소를 고려해 실제 체감 난이도에 가까운 결과를 제공합니다.\n"
+                "  3. Osu 파일은 타이밍 보정(+0.72)이 적용되어 최대 25.72 레벨까지 표시됩니다.\n\n"
+                "* 개발자 모드로 실행하려면 '--dev' 옵션을 사용하세요."
+            )
+            ttk.Label(guide_frame, text=guide_text, font=("Arial", 11)).pack(anchor="w")
+            
+            # User Options
+            opt_frame = ttk.Frame(guide_frame)
+            opt_frame.pack(fill=tk.X, pady=10)
+            
+            ttk.Checkbutton(opt_frame, text="최적화 가중치 사용 (권장)", variable=self.use_optimized_var, command=self.toggle_optimized_weights).pack(side=tk.LEFT, padx=10)
+            ttk.Checkbutton(opt_frame, text="레벨 제한 해제 (25+)", variable=self.uncap_level_var).pack(side=tk.LEFT, padx=10)
+            ttk.Checkbutton(opt_frame, text="초딸깍 모드 (요약 팝업)", variable=self.auto_mode_var).pack(side=tk.LEFT, padx=10)
                 
         # Results Group
         self.result_text = tk.Text(mid_frame, height=10, width=40)
@@ -206,9 +277,11 @@ class BMSCalculatorApp:
         
     def toggle_auto_mode(self):
         if self.auto_mode_var.get():
-            self.a_entry.configure(state='disabled')
+            if hasattr(self, 'a_entry'):
+                self.a_entry.configure(state='disabled')
         else:
-            self.a_entry.configure(state='normal')
+            if hasattr(self, 'a_entry'):
+                self.a_entry.configure(state='normal')
 
     def browse_file(self):
         filename = filedialog.askopenfilename(filetypes=[("Rhythm Game Files", "*.bms *.bme *.osu"), ("BMS Files", "*.bms *.bme"), ("Osu Files", "*.osu"), ("All Files", "*.*")])
@@ -230,6 +303,12 @@ class BMSCalculatorApp:
                 parser = osu_parser.OsuParser(path)
                 notes = parser.parse()
                 duration = parser.duration
+                
+                # [NEW] Filter 10K Only
+                if parser.key_count != 10:
+                    messagebox.showwarning("지원하지 않는 키 모드", "Osu 차트는 10키만 지원합니다.")
+                    self.status_var.set("Calculation Aborted")
+                    return
             else:
                 parser = bms_parser.BMSParser(path)
                 notes = parser.parse()
@@ -285,20 +364,18 @@ class BMSCalculatorApp:
             # Extract params
             p = {k: v.get() for k, v in self.params.items()}
             
+            # [NEW] Osu Offset
+            is_osu = path.lower().endswith('.osu')
+            lvl_offset = 0.72 if is_osu else 0.0
+            
             if self.auto_mode_var.get():
                 # Auto Mode: Now just runs calculation once.
-                # The level is estimated directly from D0 in calc.py.
-                # We don't need to search for 'a' anymore because 'a' (player skill) 
-                # is no longer used for level estimation in the new Direct D0 model.
-                # However, 'a' might still be used for S_hat (legacy) or other things?
-                # Actually, S_hat is disabled.
-                # So 'a' parameter is effectively unused for Level Estimation.
-                
-                # Just run once with current params
                 result = calc.compute_map_difficulty(
                     metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
                     metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
+                    metrics['chord_strain'], # [NEW]
                     alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
+                    omega=p['omega'], # [NEW]
                     lam_L=p['lam_L'], lam_S=p['lam_S'],
                     w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
                     a=p['a'], k=p['k'],
@@ -307,7 +384,10 @@ class BMSCalculatorApp:
                     total_notes=len(notes),
                     gamma_clear=p['gamma_clear'],
                     cap_start=p['cap_start'], cap_range=p['cap_range'],
-                    uncap_level=self.uncap_level_var.get()
+                    uncap_level=self.uncap_level_var.get(),
+                    D_min=p['D_min'], # [NEW]
+                    D_max=p['D_max'], gamma_curve=p['gamma_curve'],
+                    level_offset=lvl_offset # [NEW]
                 )
                 
                 est_level = result['est_level']
@@ -320,7 +400,9 @@ class BMSCalculatorApp:
                 result = calc.compute_map_difficulty(
                     metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
                     metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
+                    metrics['chord_strain'], # [NEW]
                     alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
+                    omega=p['omega'], # [NEW]
                     lam_L=p['lam_L'], lam_S=p['lam_S'],
                     w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
                     a=p['a'], k=p['k'],
@@ -329,7 +411,10 @@ class BMSCalculatorApp:
                     total_notes=len(notes),
                     gamma_clear=p['gamma_clear'],
                     cap_start=p['cap_start'], cap_range=p['cap_range'],
-                    uncap_level=self.uncap_level_var.get()
+                    uncap_level=self.uncap_level_var.get(),
+                    D_min=p['D_min'], # [NEW]
+                    D_max=p['D_max'], gamma_curve=p['gamma_curve'],
+                    level_offset=lvl_offset # [NEW]
                 )
                 extra_msg = ""
             

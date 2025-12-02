@@ -6,16 +6,17 @@ import metric_calc
 import numpy as np
 import time
 
-def verify_batch_levels(root_dir):
-    print(f"Scanning {root_dir} for BMS files...")
-    
-    # Find all BMS files recursively
-    # patterns: *.bms, *.bme, *.bml
-    files = []
-    for ext in ['*.bms', '*.bme', '*.bml']:
-        files.extend(glob.glob(os.path.join(root_dir, '**', ext), recursive=True))
+def verify_batch_levels(root_dirs):
+    if isinstance(root_dirs, str):
+        root_dirs = [root_dirs]
         
-    print(f"Found {len(files)} files.")
+    files = []
+    for root_dir in root_dirs:
+        print(f"Scanning {root_dir} for BMS files...")
+        for ext in ['*.bms', '*.bme', '*.bml']:
+            files.extend(glob.glob(os.path.join(root_dir, '**', ext), recursive=True))
+        
+    print(f"Found {len(files)} files total.")
     
     results = []
     
@@ -40,26 +41,20 @@ def verify_batch_levels(root_dir):
                     title = line.split(maxsplit=1)[1].strip() if len(line.split()) > 1 else "Unknown"
                     
             if play_level is None:
-                # print(f"Skipping {os.path.basename(file_path)}: No #PLAYLEVEL found")
                 continue
                 
             # Filter reasonable levels (e.g., 1-25)
-            # If user has specific labeling, adjust this filter
             if not (1 <= play_level <= 25):
-                print(f"Skipping {os.path.basename(file_path)}: Level {play_level} out of range")
                 continue
                 
             # 2. Parse Chart and Calculate
-            # Use BMSParser class
             try:
                 parser = bms_parser.BMSParser(file_path)
                 notes = parser.parse()
             except Exception as e:
-                print(f"Skipping {os.path.basename(file_path)}: Parse error {e}")
                 continue
             
             if not notes:
-                print(f"Skipping {os.path.basename(file_path)}: No notes found")
                 continue
                 
             # Calculate Metrics
@@ -72,9 +67,12 @@ def verify_batch_levels(root_dir):
             res = calc.compute_map_difficulty(
                 metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
                 metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
+                metrics['chord_strain'], # [NEW]
                 duration=duration,
                 total_notes=len(notes),
-                uncap_level=False # We want to compare with capped 1-25
+                uncap_level=False, # We want to compare with capped 1-25
+                D_max=55.0,
+                gamma_curve=1.0,
             )
             
             est_level = res['est_level']
@@ -89,11 +87,13 @@ def verify_batch_levels(root_dir):
                 'diff': est_level - play_level
             })
             
-            if i % 10 == 0:
+            if i % 100 == 0:
                 print(f"Processed {i}/{len(files)}...")
                 
         except Exception as e:
-            # print(f"Error processing {file_path}: {e}")
+            print(f"Error processing {file_path}: {e}")
+            import traceback
+            traceback.print_exc()
             pass
 
     end_time = time.time()
@@ -133,6 +133,8 @@ def verify_batch_levels(root_dir):
         f.write(report_content)
         
 if __name__ == "__main__":
-    # Adjust path as needed
-    target_dir = r"d:\계산기\테스트 샘플"
-    verify_batch_levels(target_dir)
+    target_dirs = [
+        r"d:\계산기\테스트 샘플\10K2S",
+        r"d:\계산기\테스트 샘플\10Key-Revive-pack"
+    ]
+    verify_batch_levels(target_dirs)

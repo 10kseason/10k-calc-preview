@@ -24,6 +24,9 @@ def soft_cap_load(b_t, cap_start=60.0, cap_range=30.0):
     return out
 
 
+# ----------------------------
+# 1. 윈도우별 부하 b_t 계산 (Modified)
+# ----------------------------
 def compute_window_load(
     nps,         # np.ndarray, 각 윈도우별 NPS
     ln_strain,   # np.ndarray, 각 윈도우별 LN strain
@@ -31,20 +34,19 @@ def compute_window_load(
     roll_pen,    # np.ndarray, 각 윈도우별 롤 패널티
     alt_cost,    # np.ndarray, 각 윈도우별 손배치/교차 코스트
     hand_strain, # np.ndarray, 손당 NPS (Max of L/R)
+    chord_strain,# [NEW] np.ndarray, 동시치기 부하 (Sum of (ChordSize-1))
     alpha=1.0,
     beta=1.0,
     gamma=1.0,
     delta=1.0,
     eta=1.0,
-    theta=1.0, # Hand Strain Weight
+    theta=1.0, 
+    omega=1.0,   # [NEW] Chord Weight
     cap_start=60.0,
     cap_range=30.0,
 ):
     """
-    b_t = α*NPS_t + β*LNStrain_t + γ*JackPenalty_t + δ*RollPenalty_t + η*AltCost_t + θ*HandStrain_t
-    
-    NPS Scaling:
-    If NPS > 40: NPS' = 40 + (NPS - 40)^1.2
+    b_t = α*NPS + β*LN + γ*Jack + δ*Roll + η*Alt + θ*Hand + ω*Chord
     """
     nps = np.asarray(nps, dtype=float)
     ln_strain = np.asarray(ln_strain, dtype=float)
@@ -52,6 +54,7 @@ def compute_window_load(
     roll_pen = np.asarray(roll_pen, dtype=float)
     alt_cost = np.asarray(alt_cost, dtype=float)
     hand_strain = np.asarray(hand_strain, dtype=float)
+    chord_strain = np.asarray(chord_strain, dtype=float) # [NEW]
 
     # Non-linear NPS Scaling for high density
     nps_scaled = np.copy(nps)
@@ -64,7 +67,8 @@ def compute_window_load(
         gamma * jack_pen +
         delta * roll_pen +
         eta * alt_cost + 
-        theta * hand_strain
+        theta * hand_strain +
+        omega * chord_strain # [NEW] 동시치기 가중치 합산
     )
     
     # Soft Cap 적용
@@ -104,7 +108,6 @@ def compute_endurance_and_burst(b_t, lam_L=0.3, lam_S=0.8):
     P = float(np.max(ema_S))
     return F, P, ema_L, ema_S
 
-
 # ----------------------------
 # 3. 원시 난이도 D0 계산
 # ----------------------------
@@ -135,12 +138,11 @@ def compute_raw_difficulty(
     else:
         P_rank_used = float(P_rank)
 
-    var_b = float(np.var(b_t))
-
-    # 축별 기여
+    # 🔧 여기 변경
+    std_b = float(np.std(b_t))   # <= 분산 대신 표준편차
     vF = w_F * F_rank_used
     vP = w_P * P_rank_used
-    vV = w_V * var_b
+    vV = w_V * std_b
 
     if p_norm is None or p_norm == 1.0:
         # 기존 L1 방식
@@ -240,38 +242,69 @@ def target_D0_for_survival(S_target, a, k):
 # ----------------------------
 # 5. 레벨 예측 (1~20)
 # ----------------------------
+# ----------------------------
+# 5. 레벨 예측 (1~20)
+# ----------------------------
 def pattern_level_from_D0(
     D0: float,
-    D_min: float = 0.0,  # Adjusted for D0=0 -> Lv 1
-    D_max: float = 75.0, # Adjusted for D0=38 -> Lv 13 (approx D0/3 + 1)
-    gamma: float = 1.0,  # Linear mapping fits well
+    D_min: float = 0.0,
+    D_max: float = 55.0, # [수정] 90 -> 55 (Jack Pen fix 후 재조정)
+    gamma: float = 1.0,
     uncap: bool = False,
 ) -> float:
     """
-    Raw 난이도 D0를 '패턴 레벨(1~25)'로 바로 매핑.
-
-    D0 <= D_min -> 1렙 근처
-    D0 >= D_max -> 25렙 근처
-    사이 구간은 (정규화 후)^gamma 로 곡선 보정.
+    Raw 난이도 D0를 '패턴 레벨'로 매핑.
+    
+    uncap=False (Default):
+      - Range: 1 ~ 25
+      - Formula: 1 + 24 * x^gamma
+      - Clamped at D_max (x=1)
+      
+    uncap=True (Debug Mode):
+      - Range: 0 ~ 100+
+      - Formula: 100 * x^gamma
+      - No upper clamp. D_max corresponds to Level 100.
     """
-    # 1) D0를 [0,1]로 정규화
-    x = (D0 - D_min) / (D_max - D_min)
-    x = max(0.0, min(1.0, x))  # [0,1] 클램프
-
-    # 2) 곡선 보정
-    #   gamma > 1  -> 상단 압축, 하단 확대
-    #   gamma < 1  -> 하단 압축, 상단 확대
-    x_scaled = x ** gamma
-
-    # 3) 1~25 스케일로 매핑
-    base = 1.0 + 24.0 * x_scaled  # 0 -> 1, 1 -> 25
-
-    if not uncap:
-        # 정수 레벨로 반올림 + 클램프
-        return float(max(1.0, min(25.0, round(base))))
+    if uncap:
+        # Debug Scale: 0 at D_min, 100 at D_max, extends beyond 100
+        x = (D0 - D_min) / (D_max - D_min)
+        x = max(0.0, x) # No upper clamp
+        x_scaled = x ** gamma
+        return float(100.0 * x_scaled)
     else:
-        # 자유 레벨 (소수 허용, 상한 없음)
-        return float(max(1.0, base))
+        # Standard Scale: 1 at D_min, 25 at D_max, clamped
+        x = (D0 - D_min) / (D_max - D_min)
+        x = max(0.0, min(1.0, x))
+        x_scaled = x ** gamma
+        base = 1.0 + 24.0 * x_scaled
+        
+        # Band-wise Level Correction (Antigravity v0.1)
+        # Based on residual analysis:
+        # - Low (< 12): -1.5 (Fix overprediction)
+        # - Trans (12-13): -1.5 -> 0.0
+        # - Trans (13-14): 0.0 -> +1.5
+        # - High (14-17): +1.5 (Fix underprediction)
+        # - Trans (17-19): +1.5 -> +5.0
+        # - Top (> 19): +5.0
+        
+        level = base
+        if level < 12.0:
+            level = max(1.0, level - 1.5)
+        elif level < 13.0:
+            t = level - 12.0
+            level = level - 1.5 * (1.0 - t)
+        elif level < 14.0:
+            t = level - 13.0
+            level = level + 1.5 * t
+        elif level < 17.0:
+            level = level + 1.5
+        elif level < 19.0:
+            t = (level - 17.0) / 2.0
+            level = level + 1.5 + (3.5 * t)
+        else:
+            level = level + 5.0
+            
+        return float(max(1.0, min(25.0, level)))
 
 def estimate_level(D0, uncap=False):
     """
@@ -291,15 +324,6 @@ def get_level_label(level):
     12~14: 중고수
     14~16: 고수
     16~19: 초고수
-    
-    Handling overlaps by favoring the higher tier for the boundary start?
-    Let's assume:
-    1 <= L < 5: 초보자
-    5 <= L < 9: 초중수
-    9 <= L < 12: 중수
-    12 <= L < 14: 중고수
-    14 <= L < 16: 고수
-    16 <= L <= 19: 초고수
     """
     if level < 5: return "초보자"
     if level < 9: return "초중수"
@@ -311,47 +335,43 @@ def get_level_label(level):
 
 
 # ----------------------------
-# 6. 전체 파이프라인 예시 함수
+# 6. 전체 파이프라인 함수 (Modified)
 # ----------------------------
 def compute_map_difficulty(
-    nps, ln_strain, jack_pen, roll_pen, alt_cost, hand_strain,
-    # 부하 가중치 (Tuned for 10K/14K support)
-    # alpha: NPS Weight (0.8) - Reduced to prevent double counting with Hand Strain
-    # theta: Hand Strain Weight (0.5) - Reduced for chord-heavy charts
-    # eta: Alt Cost Weight (0.5) - Reduced for chord-heavy charts
+    nps, ln_strain, jack_pen, roll_pen, alt_cost, hand_strain, 
+    chord_strain, # [NEW] Input required
+    # 부하 가중치
     alpha=0.8, beta=1.0, gamma=1.0, delta=1.0, eta=0.5, theta=0.5,
+    omega=1.5, # [NEW] Chord Weight (기본값 1.5 추천 - 동시치기는 체력 소모가 큼)
     # EMA 람다
     lam_L=0.3, lam_S=0.8,
-    # 난이도 가중치 (클리어용)
+    # 난이도 가중치
     w_F=1.0, w_P=1.0, w_V=0.2,
     # Soft Cap
     cap_start=60.0, cap_range=30.0,
-    # 로지스틱 파라미터 (로그 피팅 결과)
-    # Calibrated for L5 Norm + F-mean scale (D0 approx 4~20)
-    # D0=4 -> S=0.67, D0=10 -> S=0.35, D0=17 -> S=0.10
+    # 로지스틱 파라미터
     a=1.64, k=0.250,
-    # 전체 DB에서 얻은 F/P 퍼센타일 (없으면 None)
+    # 기타
     F_rank=None, P_rank=None,
-    # Duration for Level Est
     duration=1.0,
-    s_offset=3.0, # Offset for S Rank difficulty (Deprecated but kept for compat)
-    total_notes=1000, # Added for Binomial Model
-    gamma_clear=1.0, # Added for Gamma Clear Layer
-    # S랭 난이도용 별도 가중치 (None이면 자동으로 클리어용에서 파생)
-    w_F_s=None, w_P_s=None, w_V_s=None,
-    uncap_level=False, # Added for Uncap Level Mode
+    total_notes=1000,
+    gamma_clear=1.0,
+    uncap_level=False,
+    # Level Mapping Params
+    D_min=0.0,   # [NEW] Calibrated D_min
+    D_max=55.0,  # [수정] 90 -> 55
+    gamma_curve=1.0,
+    level_offset=0.0, # [NEW] Fixed Level Offset (e.g. for Osu)
+    # Legacy args ignored
+    s_offset=None, w_F_s=None, w_P_s=None, w_V_s=None,
 ):
     """
-    1) b_t 계산
-    2) F, P 계산
-    3) D0 계산 (클리어용 / S랭용 분리)
-    4) 예측 생존률 S_hat 반환
-    5) 예측 레벨 반환
+    Chord Strain을 포함한 난이도 계산 파이프라인
     """
-    # 1. 윈도우 부하
+    # 1. 윈도우 부하 (chord_strain, omega 추가됨)
     b_t = compute_window_load(
-        nps, ln_strain, jack_pen, roll_pen, alt_cost, hand_strain,
-        alpha=alpha, beta=beta, gamma=gamma, delta=delta, eta=eta, theta=theta,
+        nps, ln_strain, jack_pen, roll_pen, alt_cost, hand_strain, chord_strain,
+        alpha=alpha, beta=beta, gamma=gamma, delta=delta, eta=eta, theta=theta, omega=omega,
         cap_start=cap_start, cap_range=cap_range,
     )
 
@@ -360,9 +380,7 @@ def compute_map_difficulty(
         b_t, lam_L=lam_L, lam_S=lam_S
     )
 
-    # 3. 원시 난이도 (클리어용 / S랭용 분리)
-
-    # 3-1) 클리어용 난이도 (기존 D0 그대로)
+    # 3. 클리어용 난이도 (D0)
     D_clear = compute_raw_difficulty(
         F, P, b_t,
         F_rank=F_rank, P_rank=P_rank,
@@ -370,39 +388,33 @@ def compute_map_difficulty(
         p_norm=5.0,
     )
 
-    # 3-2) S랭용 난이도 (Disabled)
-    # D_srank = compute_raw_difficulty(...)
-    D_srank = 0.0
-
-    # ★ 3-3. 곡 길이 보정 (Length Bonus)
-    # F가 mean으로 바뀌면서 사라진 "곡 길이에 따른 체력 부담"을 보정
-    # 1분 미만: 보정 없음 (1.0)
-    # 2분: 1.0 + 0.08 * 1 = 1.08 (+8%)
-    # 4분: 1.0 + 0.08 * 2 = 1.16 (+16%)
+    # 4. 곡 길이 보정 [수정] 약화 (log2 -> log1p) + 밀도 보정 (User Feedback)
+    # length_bonus를 total_notes / (duration * avg_nps)로 노멀라이즈.
+    # avg_nps를 15.0 (Dense Chart 기준)으로 가정.
     length_norm = max(duration, 60.0)
-    length_bonus = 1.0 + 0.08 * math.log2(length_norm / 60.0)
+    base_bonus = 0.05 * np.log1p((length_norm - 60.0) / 60.0)
     
-    # Apply bonus to D_clear (Pattern Difficulty)
+    # Density Factor: (TotalNotes / Duration) / 15.0
+    # NPS가 15 이상이면 1.0 (Full Bonus), 낮으면 감쇠
+    avg_nps = total_notes / max(1.0, duration)
+    density_factor = min(1.0, avg_nps / 15.0)
+    
+    length_bonus = 1.0 + base_bonus * density_factor
+    
     D_pattern = D_clear * length_bonus
 
-    # 4. 생존률 예측 (Disabled/Legacy)
-    #   - 클리어: 스파이크(F/P/Var)가 크게 박힘
-    # S_hat = predict_survival(D_clear, a=a, k=k, gamma_clear=gamma_clear)
-    S_hat = 0.0
-    
-    # S랭 확률 (Disabled)
-    # S_rank_prob = predict_s_rank_95(D_srank, a=a, k=k, total_notes=total_notes, acc_target=0.95)
-    S_rank_prob = 0.0
-    
-    # 5. 레벨 예측 (Direct D0 Mapping)
-    # est_level = estimate_level(D_clear, uncap=uncap_level)
+    # 5. 레벨 예측
     pattern_level = pattern_level_from_D0(
         D_pattern,
-        D_min=0.0,
-        D_max=75.0,
-        gamma=1.0,
+        D_min=D_min,
+        D_max=D_max,
+        gamma=gamma_curve,
         uncap=uncap_level
     )
+    
+    # [NEW] Apply Offset
+    pattern_level += level_offset
+    
     est_level = int(pattern_level)
     level_label = get_level_label(est_level)
 
@@ -412,13 +424,12 @@ def compute_map_difficulty(
         "P": P,
         "ema_L": ema_L,
         "ema_S": ema_S,
-        "D0": D_pattern, # Return the bonus-applied difficulty
-        "S_hat": S_hat,
-        "S_rank_prob": S_rank_prob,
+        "D0": D_pattern,
         "est_level": est_level,
         "level_label": level_label,
         "pattern_level": pattern_level,
         "length_bonus": length_bonus,
+        "chord_strain": chord_strain # 디버깅용 리턴 추가
     }
 
 # --------------------------------------

@@ -223,17 +223,41 @@ class BMSParser:
                             if val in self.bpm_definitions:
                                 current_bpm = self.bpm_definitions[val]
                         
+                        # Check LNOBJ
+                        ln_obj = self.header.get('LNOBJ')
+                        
                         # Note Object
-                        elif ch in self.channel_map:
+                        if ch in self.channel_map:
                             key_num = self.channel_map[ch]
-                            is_ln = ch.startswith('5') # Simple check for 51-59
+                            is_ln_channel = ch.startswith('5') or ch.startswith('6') # 5x, 6x are always LN
                             
-                            self.notes.append({
-                                'time': current_time,
-                                'column': key_num,
-                                'type': 'ln' if is_ln else 'note',
-                                'value': val # Keep value just in case (e.g. LN end)
-                            })
+                            # LNOBJ Logic: If value matches LNOBJ, it's an LN End marker
+                            is_ln_obj = (ln_obj and val.upper() == ln_obj.upper())
+                            
+                            if is_ln_obj:
+                                # This is an LN End marker.
+                                # We treat it as an 'ln_marker' type, but specifically for LNOBJ pairing.
+                                # Actually, standard LN logic uses pairs.
+                                # If we mark this as 'ln_marker', the post-processor needs to know.
+                                # Let's use a specific type or just rely on pairing?
+                                # If we use 'ln_marker', we need to ensure the START was also an 'ln_marker'.
+                                # But the start was likely parsed as a 'note' because we didn't know yet.
+                                # So we need to handle this in post-processing or here.
+                                
+                                # Better approach: Mark it as 'ln_end'
+                                self.notes.append({
+                                    'time': current_time,
+                                    'column': key_num,
+                                    'type': 'ln_end',
+                                    'value': val
+                                })
+                            else:
+                                self.notes.append({
+                                    'time': current_time,
+                                    'column': key_num,
+                                    'type': 'ln' if is_ln_channel else 'note',
+                                    'value': val
+                                })
                             
                 last_pos = pos
             
@@ -243,13 +267,6 @@ class BMSParser:
         self.duration = current_time
         
         # Post-process LNs
-        # BMS LNs (Channel 51-59) are typically: Start -> End -> Start -> End
-        # Or sometimes LNType 2 (MGQ) where 00 ends it?
-        # Standard BMS usually treats 5x channel objects as toggles or specific LN objects.
-        # For simplicity in this parser, we will assume pairs (Start, End).
-        # We need to pair them up.
-        
-        # Sort notes by time
         self.notes.sort(key=lambda x: x['time'])
         
         final_notes = []
@@ -257,9 +274,11 @@ class BMSParser:
         
         for note in self.notes:
             col = note['column']
-            if note['type'] == 'ln':
+            n_type = note['type']
+            
+            if n_type == 'ln':
+                # Standard LN Channel (5x/6x) or LNTYPE 1 Pair
                 if col in active_lns:
-                    # This is the end of the LN
                     start_note = active_lns.pop(col)
                     final_notes.append({
                         'time': start_note['time'],
@@ -268,14 +287,45 @@ class BMSParser:
                         'type': 'ln'
                     })
                 else:
-                    # Start of LN
                     active_lns[col] = note
+            
+            elif n_type == 'ln_end':
+                # LNOBJ End Marker
+                # Pairs with the most recent 'note' on this column
+                # We need to find the last note added to final_notes for this column?
+                # Or maybe we should have kept it in a buffer?
+                
+                # Since we are iterating sorted notes, the start note must be in final_notes (as a 'note')
+                # or in active_lns (if we treated it as LN start, but we treated it as 'note').
+                
+                # We need to look backwards in final_notes to find the start.
+                # This is inefficient.
+                # Alternative: When we see 'ln_end', we convert the LAST 'note' on this column into 'ln'.
+                
+                # Let's track last_seen_note per column
+                found_start = False
+                # Iterate backwards through final_notes to find the last 'note' on this col
+                for i in range(len(final_notes)-1, -1, -1):
+                    cand = final_notes[i]
+                    if cand['column'] == col and cand['type'] == 'note':
+                        # Found it! Convert to LN
+                        cand['type'] = 'ln'
+                        cand['endtime'] = note['time']
+                        found_start = True
+                        break
+                
+                if not found_start:
+                    # Orphan End? Ignore or treat as note?
+                    # LNOBJ end marker itself is usually not a note if it's just a marker.
+                    # But if it fails to pair, maybe it should be a note?
+                    # Usually LNOBJ is just a marker.
+                    pass
+                    
             else:
-                # Normal note
+                # Normal Note
                 final_notes.append(note)
         
-        # If any LNs are left open, treat them as normal notes or discard? 
-        # Usually treat as normal note at start time.
+        # Handle open LNs from 5x/6x
         for col, note in active_lns.items():
             note['type'] = 'note'
             final_notes.append(note)

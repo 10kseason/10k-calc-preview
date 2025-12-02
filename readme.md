@@ -1,24 +1,34 @@
-# BMS Difficulty Calculator
+# BMS Difficulty Calculator (Antigravity v0.1)
 
-BMS 및 Osu!mania 파일을 위한 난이도 계산기입니다.
+A scientifically calibrated difficulty calculator for 10-key rhythm game charts (BMS/Osu!mania).
 
-## 주요 기능
-- **다중 포맷 지원**: `.bms`, `.bme`, `.osu` 파일 파싱.
-- **상세 분석**: NPS, LN Strain, Jack, Alt Cost 등 다양한 메트릭 분석.
-- **난이도 모델**: Endurance(체력)와 Burst(순간 난이도)를 고려한 독자적인 난이도 산출.
-- **HP 시뮬레이션**: Osu!mania HP9 게이지 기준 생존 가능성 예측.
-- **Qwilight 연동**: Qwilight 플레이 결과를 입력하여 통합 난이도 계산.
+## Key Features
+*   **Advanced Difficulty Model**: Uses a weighted combination of NPS, LN Strain, Jack Penalty, Roll Penalty, Alt Cost, Hand Strain, and Chord Weight.
+*   **Band-wise Calibration**: Implements a sophisticated band-wise correction logic to address S-shaped bias, ensuring accurate ratings across the full difficulty spectrum (Lv.1 - Lv.25+).
+*   **Calibrated Parameters**: Optimized on a large dataset of GCS and 10k2s charts (MAE: 1.70).
+    *   `D_min`: 11.52 (Level 1 Reference)
+    *   `D_max`: 185.91 (Level 25 Reference)
+    *   `gamma`: 0.47 (Curve Shape)
+*   **Uncapped Levels**: Supports level calculation beyond the traditional Lv.25 cap, useful for "Overjoy" or "Insane" difficulty charts.
+*   **HP Analysis**: Includes a Qwilight result converter and HP9 survival analysis.
 
-## 실행 방법
-```bash
-python main_gui.py
-```
+## Installation & Usage
+1.  **Download**: Get the latest release from the `dist` folder.
+2.  **Run**: Execute `BMSCalculator.exe`.
+3.  **Calculate**:
+    *   Click "Browse" to select a `.bms`, `.bme`, or `.osu` file.
+    *   Click "Calculate" to see the estimated level and detailed metrics.
+    *   Use "Optimized Weights" (default) for the most accurate results.
 
-## 문서
-상세한 구현 내용은 [docs/implementation_details.md](docs/implementation_details.md)를 참고하세요.
+## Developer Notes
+*   **Build**: Run `pyinstaller BMSCalculator.spec` to build the executable.
+*   **Calibration**: Use `calibrate_levels.py` to recalibrate parameters if new data is available.
+*   **Analysis**: Run `run_full_analysis.py` to generate a comprehensive report on your local chart collection.
 
-## 요구 사항
-- Python 3.x
-- numpy
-- matplotlib
-- tkinter (보통 Python에 내장됨)
+## Latest Updates (v0.1)
+*   **Refined Calibration**: Excluded outliers (Lv.25+) during calibration for better mid-range accuracy.
+*   **Band-wise Correction**: Added specific logic to fix under-prediction at high levels and over-prediction at low levels.
+*   **GUI Update**: Hardcoded the latest parameters into the application for immediate use.
+
+## Credits
+Developed by gemini & User.

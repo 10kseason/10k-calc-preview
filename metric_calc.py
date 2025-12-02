@@ -26,6 +26,7 @@ def calculate_metrics(notes, duration, window_size=1.0):
     roll_pen = np.zeros(num_windows)
     alt_cost = np.zeros(num_windows)
     hand_strain = np.zeros(num_windows)
+    chord_strain = np.zeros(num_windows)
     
     # Pre-process notes into windows for faster access
     windows = [[] for _ in range(num_windows)]
@@ -133,13 +134,27 @@ def calculate_metrics(notes, duration, window_size=1.0):
     
     # 3. Jack Penalty
     # High if same column is hit rapidly.
-    # For each window, find min interval between same-column notes.
+    # 3. Jack Penalty
+    # High if same column is hit rapidly.
+    # [Modified] "Jack Nerf should only apply to Code Jacks"
+    # Strategy: Calculate Jack Score for each event.
+    # If it's a "Code Jack" (Same Chord Repeated), apply a nerf factor (e.g. 0.5).
+    # Take the MAX score in the window.
+    
     for i in range(num_windows):
         w_notes = windows[i]
         if not w_notes: continue
         
+        # Build time_to_cols for Code Jack detection
+        time_to_cols = {}
+        for note in w_notes:
+            t = note['time']
+            if t not in time_to_cols:
+                time_to_cols[t] = set()
+            time_to_cols[t].add(note['column'])
+            
         col_last_time = {}
-        min_diff = 1.0 # Max cap
+        max_jack_score = 0.0
         
         # Sort by time
         w_notes.sort(key=lambda x: x['time'])
@@ -147,39 +162,52 @@ def calculate_metrics(notes, duration, window_size=1.0):
         for note in w_notes:
             col = note['column']
             t = note['time']
+            
             if col in col_last_time:
                 diff = t - col_last_time[col]
-                if diff < min_diff:
-                    min_diff = diff
+                if diff < 0.001: diff = 0.001
+                
+                # Calculate Raw Score
+                # Capped Linear Mapping: 0.2s -> 0, 0.0s -> 25.0
+                if diff < 0.2:
+                    raw_score = 25.0 * (0.2 - diff) / 0.2
+                    
+                    # Check for Code Jack
+                    # Same Key Combination Repeated?
+                    prev_t = col_last_time[col]
+                    cols_curr = time_to_cols.get(t, set())
+                    cols_prev = time_to_cols.get(prev_t, set())
+                    
+                    is_code_jack = False
+                    if len(cols_curr) > 1 and cols_curr == cols_prev:
+                        is_code_jack = True
+                        
+                    if is_code_jack:
+                        # Apply Nerf
+                        raw_score *= 0.5
+                        
+                    if raw_score > max_jack_score:
+                        max_jack_score = raw_score
+                        
             col_last_time[col] = t
             
-        # Penalty is inverse of min_diff?
-        # If 100ms jack -> 10 notes/sec equivalent.
-        # Let's define penalty as 1/min_diff (capped).
-        if min_diff < 0.001: min_diff = 0.001
-        jack_pen[i] = 1.0 / min_diff if min_diff < 0.2 else 0.0 # Only penalize if faster than 200ms (5 NPS)
-        
-    # 4. Roll Penalty
-    # Tricky to detect generic rolls.
-    # Let's approximate: High NPS but low Jack Penalty?
-    # Or specific patterns.
-    # Simple heuristic: Variance of columns used?
-    # If using 1-2-1-2, variance is low (only 2 cols).
-    # If using 1-2-3-4-5-6-7, variance is high.
-    # Actually, rolls are usually 2-4 keys repeated.
-    # Let's skip complex pattern detection and use "Density of notes" vs "Unique columns".
-    # Roll Penalty = (NPS) / (Unique Columns + 1) * Factor?
-    # No, that's vague.
-    # Let's leave Roll Penalty as 0 for now or simple placeholder.
-    # Placeholder: 10% of NPS if Jack is low.
-    roll_pen = nps * 0.1 
-    
-    # 5. Alt Cost & Hand Strain (Action-based)
-    # Instead of counting notes, we count "actions" (unique timestamps) per hand.
-    
+        jack_pen[i] = max_jack_score
+
+    # 4. Roll Penalty (Variance based)
+    for i in range(num_windows):
+        w_notes = windows[i]
+        if len(w_notes) > 1:
+            cols = [n['column'] for n in w_notes]
+            col_var = np.var(cols)
+            roll_pen[i] = col_var * nps[i] * 0.1
+        else:
+            roll_pen[i] = 0.0
+
+    # 5. Alt Cost & Hand Strain
     max_col = 0
-    for note in notes:
-        max_col = max(max_col, note['column'])
+    if notes:
+        for note in notes:
+            max_col = max(max_col, note['column'])
     is_dp = max_col > 7
 
     for i in range(num_windows):
@@ -214,14 +242,31 @@ def calculate_metrics(notes, duration, window_size=1.0):
         diff = abs(l_actions - r_actions)
         alt_cost[i] = diff / window_size
         
-        # Hand Strain: Max Actions Per Second of either hand
         hand_strain[i] = max(l_actions, r_actions) / window_size
         
+        # 6. Chord Strain
+        chord_strain_val = 0.0
+        time_counts = {}
+        for note in w_notes:
+            t = note['time']
+            time_counts[t] = time_counts.get(t, 0) + 1
+            
+        for t, count in time_counts.items():
+            if count > 1:
+                # [수정] Log scaling for chord strain (User Feedback)
+                # log1p(count) applied to each chord? Or log1p(total)?
+                # User said: "chord_strain[i] = np.log1p(chord_strain_val)"
+                # So we sum first, then log.
+                chord_strain_val += (count - 1)
+                
+        chord_strain[i] = np.log1p(chord_strain_val)
+
     return {
         'nps': nps,
         'ln_strain': ln_strain,
         'jack_pen': jack_pen,
         'roll_pen': roll_pen,
         'alt_cost': alt_cost,
-        'hand_strain': hand_strain
+        'hand_strain': hand_strain,
+        'chord_strain': chord_strain
     }

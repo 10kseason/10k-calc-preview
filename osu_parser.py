@@ -39,6 +39,11 @@ class OsuParser:
                         self.header['HPDrainRate'] = float(val)
                     elif key == 'OverallDifficulty':
                         self.header['OverallDifficulty'] = float(val)
+
+            elif section == 'Metadata':
+                if ':' in line:
+                    key, val = line.split(':', 1)
+                    self.header[key.strip()] = val.strip()
                         
             elif section == 'HitObjects':
                 # x,y,time,type,hitSound,objectParams,hitSample
@@ -69,13 +74,6 @@ class OsuParser:
                 
                 is_ln = (type_flags & 128) > 0
                 
-                note = {
-                    'time': time_ms / 1000.0,
-                    'column': column,
-                    'type': 'ln' if is_ln else 'note',
-                    'value': '00' # Dummy value
-                }
-                
                 if is_ln:
                     # For Hold Notes, end time is in extras
                     # x,y,time,type,hitSound,endTime:hitSample
@@ -85,16 +83,78 @@ class OsuParser:
                             end_time_ms = int(end_part.split(':')[0])
                         else:
                             end_time_ms = int(end_part)
-                        note['endtime'] = end_time_ms / 1000.0
+                        end_time = end_time_ms / 1000.0
                     else:
-                        # Fallback if malformed
-                        note['endtime'] = note['time']
-                        note['type'] = 'note'
+                        end_time = time_ms / 1000.0
+                    
+                    # BMS Style: Emit Start and End markers
+                    self.notes.append({
+                        'time': time_ms / 1000.0,
+                        'column': column,
+                        'type': 'ln_marker',
+                        'value': '00'
+                    })
+                    self.notes.append({
+                        'time': end_time,
+                        'column': column,
+                        'type': 'ln_marker',
+                        'value': '00'
+                    })
+                else:
+                    # Normal Note
+                    self.notes.append({
+                        'time': time_ms / 1000.0,
+                        'column': column,
+                        'type': 'note',
+                        'value': '00'
+                    })
                 
-                self.notes.append(note)
-                
-        # Sort notes
+        # Sort notes by time
         self.notes.sort(key=lambda x: x['time'])
+        
+        # Post-process LNs (BMS Style Pairing)
+        final_notes = []
+        active_lns = {} # col -> start_note
+        
+        for note in self.notes:
+            col = note['column']
+            if note['type'] == 'ln_marker':
+                if col in active_lns:
+                    # End of LN
+                    start_note = active_lns.pop(col)
+                    # Ensure duration > 0
+                    if note['time'] > start_note['time']:
+                        final_notes.append({
+                            'time': start_note['time'],
+                            'endtime': note['time'],
+                            'column': col,
+                            'type': 'ln'
+                        })
+                    else:
+                        # Zero duration LN -> Treat as Normal Note?
+                        # Or just ignore the end marker and keep it as note?
+                        # Let's treat start as normal note
+                        final_notes.append({
+                            'time': start_note['time'],
+                            'column': col,
+                            'type': 'note'
+                        })
+                else:
+                    # Start of LN
+                    active_lns[col] = note
+            else:
+                # Normal note
+                final_notes.append(note)
+        
+        # Handle open LNs (Start without End) -> Treat as Normal Note
+        for col, note in active_lns.items():
+            final_notes.append({
+                'time': note['time'],
+                'column': col,
+                'type': 'note'
+            })
+            
+        self.notes = sorted(final_notes, key=lambda x: x['time'])
         
         if self.notes:
             last_note = self.notes[-1]
