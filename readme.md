@@ -1,4 +1,4 @@
-# BMS Difficulty Calculator (Antigravity v0.2)
+# BMS Difficulty Calculator (v0.2)
 
 10키 리듬게임 채보(BMS/Osu!mania)용 과학적 난이도 계산기
 
@@ -57,4 +57,5 @@ python optimize_bms_only.py
 
 ## 크레딧
 Developed by Gemini & User
+
 
