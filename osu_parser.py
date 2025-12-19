@@ -83,13 +83,13 @@ class OsuParser:
                             end_time_ms = int(end_part.split(':')[0])
                         else:
                             end_time_ms = int(end_part)
-                        end_time = end_time_ms / 1000.0
+                        end_time = round(end_time_ms / 1000.0, 3)  # ms 단위로 반올림
                     else:
-                        end_time = time_ms / 1000.0
+                        end_time = round(time_ms / 1000.0, 3)  # ms 단위로 반올림
                     
                     # BMS Style: Emit Start and End markers
                     self.notes.append({
-                        'time': time_ms / 1000.0,
+                        'time': round(time_ms / 1000.0, 3),  # ms 단위로 반올림
                         'column': column,
                         'type': 'ln_marker',
                         'value': '00'
@@ -103,7 +103,7 @@ class OsuParser:
                 else:
                     # Normal Note
                     self.notes.append({
-                        'time': time_ms / 1000.0,
+                        'time': round(time_ms / 1000.0, 3),  # ms 단위로 반올림
                         'column': column,
                         'type': 'note',
                         'value': '00'
@@ -124,16 +124,20 @@ class OsuParser:
                     start_note = active_lns.pop(col)
                     # Ensure duration > 0
                     if note['time'] > start_note['time']:
+                        # Add START note
                         final_notes.append({
                             'time': start_note['time'],
-                            'endtime': note['time'],
                             'column': col,
-                            'type': 'ln'
+                            'type': 'ln_start'
+                        })
+                        # Add END note (counts as separate note for NPS)
+                        final_notes.append({
+                            'time': note['time'],
+                            'column': col,
+                            'type': 'ln_end'
                         })
                     else:
-                        # Zero duration LN -> Treat as Normal Note?
-                        # Or just ignore the end marker and keep it as note?
-                        # Let's treat start as normal note
+                        # Zero duration LN -> Treat as Normal Note
                         final_notes.append({
                             'time': start_note['time'],
                             'column': col,
@@ -156,12 +160,13 @@ class OsuParser:
             
         self.notes = sorted(final_notes, key=lambda x: x['time'])
         
+        # Duration = last note time - first note time
         if self.notes:
-            last_note = self.notes[-1]
-            if last_note['type'] == 'ln':
-                self.duration = last_note['endtime']
-            else:
-                self.duration = last_note['time']
+            first_time = self.notes[0]['time']
+            last_time = self.notes[-1]['time']
+            self.duration = last_time - first_time
+            if self.duration < 1.0:  # Minimum 1 second
+                self.duration = 1.0
         
         return self.notes
 

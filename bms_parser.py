@@ -10,17 +10,114 @@ class BMSParser:
         self.stop_definitions = {}
         self.notes = [] # List of {'time': float, 'column': int, 'type': str}
         self.duration = 0.0
+        self.key_count = 8  # 기본값: 8키 (7+1), 키 모드 감지 후 변경됨
+        self.play_mode = 'SP'  # 'SP' (Single Play) 또는 'DP' (Double Play)
+        self.detected_mode = None  # 감지된 키 모드 이름 (예: '7+1', '10K', 'DP14')
         
-        # Channel Mappings for 7Key (1P)
-        self.channel_map = {
-            '11': 1, '12': 2, '13': 3, '14': 4, '15': 5, '18': 6, '19': 7, '16': 0, # 0 for Scratch
-            # Long Notes
-            '51': 1, '52': 2, '53': 3, '54': 4, '55': 5, '58': 6, '59': 7, '56': 0,
-            # 2P Channels (DP)
-            '21': 8, '22': 9, '23': 10, '24': 11, '25': 12, '28': 13, '29': 14, '26': 15, # 15 for 2P Scratch
-            # 2P Long Notes
-            '61': 8, '62': 9, '63': 10, '64': 11, '65': 12, '68': 13, '69': 14, '66': 15
+        # ============================================================
+        # 키 모드별 채널 패턴 정의
+        # 키: (채널 세트, 키 개수, 모드 이름)
+        # 채널 세트: frozenset of 사용 채널 (일반 노트만, LN은 +40)
+        # ============================================================
+        self.key_mode_patterns = [
+            # DP/대형 모드 (먼저 체크 - 2P 채널 포함)
+            # 16키: 16 11-15 18-19 21-25 28-29 26 (스크 포함)
+            ({'16', '11', '12', '13', '14', '15', '18', '19', '21', '22', '23', '24', '25', '28', '29', '26'}, 16, 'DP16'),
+            # 14키: 11-15 18-19 21-25 28-29 (스크 없음)
+            ({'11', '12', '13', '14', '15', '18', '19', '21', '22', '23', '24', '25', '28', '29'}, 14, 'DP14'),
+            # 12키: 16 11-15 21-25 26 (스크 포함)
+            ({'16', '11', '12', '13', '14', '15', '21', '22', '23', '24', '25', '26'}, 12, 'DP12'),
+            # 10키: 11-15 21-25 (스크 없음)
+            ({'11', '12', '13', '14', '15', '21', '22', '23', '24', '25'}, 10, '10K'),
+            # 9키 PMS: 11-15 22-25
+            ({'11', '12', '13', '14', '15', '22', '23', '24', '25'}, 9, '9K_PMS'),
+            
+            # SP 모드 (1P만)
+            # 8키 (7+1): 16 11-15 18-19
+            ({'16', '11', '12', '13', '14', '15', '18', '19'}, 8, '7+1'),
+            # 7키: 11-15 18-19 (스크 없음)
+            ({'11', '12', '13', '14', '15', '18', '19'}, 7, '7K'),
+            # 6키 (#6K): 11 12 13 15 18 19
+            ({'11', '12', '13', '15', '18', '19'}, 6, '6K'),
+            # 6키 (5+1): 16 11-15
+            ({'16', '11', '12', '13', '14', '15'}, 6, '5+1'),
+            # 5키: 11-15 (스크 없음)
+            ({'11', '12', '13', '14', '15'}, 5, '5K'),
+            # 4키: 11 12 14 15
+            ({'11', '12', '14', '15'}, 4, '4K'),
+        ]
+        
+        # ============================================================
+        # 키 모드별 채널 → 열 매핑
+        # 키: 모드 이름, 값: {채널: 열} 딕셔너리
+        # 열 번호는 1-indexed (OSU 호환)
+        # ============================================================
+        self.key_mode_mappings = {
+            # 16키 DP: SC(16) 1-7(11-15,18-19) | 1-7(21-25,28-29) SC(26)
+            'DP16': {
+                '16': 1, '11': 2, '12': 3, '13': 4, '14': 5, '15': 6, '18': 7, '19': 8,
+                '21': 9, '22': 10, '23': 11, '24': 12, '25': 13, '28': 14, '29': 15, '26': 16,
+            },
+            # 14키 DP: 1-7(11-15,18-19) | 1-7(21-25,28-29) - 스크 없음
+            'DP14': {
+                '11': 1, '12': 2, '13': 3, '14': 4, '15': 5, '18': 6, '19': 7,
+                '21': 8, '22': 9, '23': 10, '24': 11, '25': 12, '28': 13, '29': 14,
+            },
+            # 12키 DP: SC(16) 1-5(11-15) | 1-5(21-25) SC(26)
+            'DP12': {
+                '16': 1, '11': 2, '12': 3, '13': 4, '14': 5, '15': 6,
+                '21': 7, '22': 8, '23': 9, '24': 10, '25': 11, '26': 12,
+            },
+            # 10키: 1-5(11-15) | 1-5(21-25) - 스크 없음
+            '10K': {
+                '11': 1, '12': 2, '13': 3, '14': 4, '15': 5,
+                '21': 6, '22': 7, '23': 8, '24': 9, '25': 10,
+            },
+            # 9키 PMS: 1-5(11-15) 6-9(22-25)
+            '9K_PMS': {
+                '11': 1, '12': 2, '13': 3, '14': 4, '15': 5,
+                '22': 6, '23': 7, '24': 8, '25': 9,
+            },
+            # 8키 (7+1): SC(16) 1-7(11-15,18-19)
+            '7+1': {
+                '16': 1, '11': 2, '12': 3, '13': 4, '14': 5, '15': 6, '18': 7, '19': 8,
+            },
+            # 7키: 1-7(11-15,18-19) - 스크 없음
+            '7K': {
+                '11': 1, '12': 2, '13': 3, '14': 4, '15': 5, '18': 6, '19': 7,
+            },
+            # 6키 (#6K): 11 12 13 15 18 19 → 1-6
+            '6K': {
+                '11': 1, '12': 2, '13': 3, '15': 4, '18': 5, '19': 6,
+            },
+            # 6키 (5+1): SC(16) 1-5(11-15)
+            '5+1': {
+                '16': 1, '11': 2, '12': 3, '13': 4, '14': 5, '15': 6,
+            },
+            # 5키: 1-5(11-15) - 스크 없음
+            '5K': {
+                '11': 1, '12': 2, '13': 3, '14': 4, '15': 5,
+            },
+            # 4키: 11 12 14 15 → 1-4
+            '4K': {
+                '11': 1, '12': 2, '14': 3, '15': 4,
+            },
         }
+        
+        # Fallback: 기존 매핑 (감지 실패 시 사용)
+        self.channel_map_fallback = {
+            # 1P Channels (11-19)
+            '11': 1, '12': 2, '13': 3, '14': 4, '15': 5, '16': 0, '17': 8, '18': 6, '19': 7,
+            # 1P Long Notes (51-59)
+            '51': 1, '52': 2, '53': 3, '54': 4, '55': 5, '56': 0, '57': 8, '58': 6, '59': 7,
+            # 2P Channels (21-29)
+            '21': 9, '22': 10, '23': 11, '24': 12, '25': 13, '26': 16, '28': 14, '29': 15,
+            # 2P Long Notes (61-69)
+            '61': 9, '62': 10, '63': 11, '64': 12, '65': 13, '66': 16, '68': 14, '69': 15
+        }
+        
+        # 현재 사용할 채널 맵 (키 모드 감지 후 설정됨)
+        self.channel_map = {}
         
     def parse(self):
         with open(self.file_path, 'r', encoding='shift_jis', errors='ignore') as f:
@@ -87,6 +184,11 @@ class BMSParser:
     def _process_data(self):
         # Sort data by measure
         self.bms_data.sort(key=lambda x: x[0])
+        
+        # ============================================================
+        # 키 모드 감지 (노트 처리 전에 채널 맵 설정)
+        # ============================================================
+        self._detect_key_mode()
         
         # Time Calculation Variables
         current_bpm = self.header.get('BPM', 130.0)
@@ -246,14 +348,14 @@ class BMSParser:
                                 
                                 # Better approach: Mark it as 'ln_end'
                                 self.notes.append({
-                                    'time': current_time,
+                                    'time': round(current_time, 3),  # ms 단위로 반올림
                                     'column': key_num,
                                     'type': 'ln_end',
                                     'value': val
                                 })
                             else:
                                 self.notes.append({
-                                    'time': current_time,
+                                    'time': round(current_time, 3),  # ms 단위로 반올림
                                     'column': key_num,
                                     'type': 'ln' if is_ln_channel else 'note',
                                     'value': val
@@ -266,7 +368,7 @@ class BMSParser:
         
         self.duration = current_time
         
-        # Post-process LNs
+        # Post-process LNs - Count LN as 2 notes (start + end) like Osu
         self.notes.sort(key=lambda x: x['time'])
         
         final_notes = []
@@ -280,57 +382,169 @@ class BMSParser:
                 # Standard LN Channel (5x/6x) or LNTYPE 1 Pair
                 if col in active_lns:
                     start_note = active_lns.pop(col)
+                    # Add START note
                     final_notes.append({
                         'time': start_note['time'],
-                        'endtime': note['time'],
                         'column': col,
-                        'type': 'ln'
+                        'type': 'ln_start'
+                    })
+                    # Add END note (counts as separate note for NPS)
+                    final_notes.append({
+                        'time': note['time'],
+                        'column': col,
+                        'type': 'ln_end'
                     })
                 else:
                     active_lns[col] = note
             
             elif n_type == 'ln_end':
                 # LNOBJ End Marker
-                # Pairs with the most recent 'note' on this column
-                # We need to find the last note added to final_notes for this column?
-                # Or maybe we should have kept it in a buffer?
-                
-                # Since we are iterating sorted notes, the start note must be in final_notes (as a 'note')
-                # or in active_lns (if we treated it as LN start, but we treated it as 'note').
-                
-                # We need to look backwards in final_notes to find the start.
-                # This is inefficient.
-                # Alternative: When we see 'ln_end', we convert the LAST 'note' on this column into 'ln'.
-                
-                # Let's track last_seen_note per column
                 found_start = False
-                # Iterate backwards through final_notes to find the last 'note' on this col
                 for i in range(len(final_notes)-1, -1, -1):
                     cand = final_notes[i]
                     if cand['column'] == col and cand['type'] == 'note':
-                        # Found it! Convert to LN
-                        cand['type'] = 'ln'
-                        cand['endtime'] = note['time']
+                        # Convert to LN start + add LN end
+                        cand['type'] = 'ln_start'
+                        final_notes.append({
+                            'time': note['time'],
+                            'column': col,
+                            'type': 'ln_end'
+                        })
                         found_start = True
                         break
                 
                 if not found_start:
-                    # Orphan End? Ignore or treat as note?
-                    # LNOBJ end marker itself is usually not a note if it's just a marker.
-                    # But if it fails to pair, maybe it should be a note?
-                    # Usually LNOBJ is just a marker.
                     pass
                     
             else:
                 # Normal Note
                 final_notes.append(note)
         
-        # Handle open LNs from 5x/6x
+        # Handle open LNs from 5x/6x - treat as single note
         for col, note in active_lns.items():
             note['type'] = 'note'
             final_notes.append(note)
             
         self.notes = sorted(final_notes, key=lambda x: x['time'])
+        
+        # Duration = last note time - first note time
+        if self.notes:
+            first_time = self.notes[0]['time']
+            last_time = self.notes[-1]['time']
+            self.duration = last_time - first_time
+            if self.duration < 1.0:  # Minimum 1 second
+                self.duration = 1.0
+        
+        # ============================================================
+        # 키 모드 감지 (열 재매핑은 이미 파싱 시 적용됨)
+        # ============================================================
+        # 키 모드는 이미 _detect_key_mode에서 설정됨
+        # 여기서는 추가 검증만 수행
+        if self.detected_mode:
+            # DP 모드 판별
+            if self.detected_mode.startswith('DP') or self.detected_mode in ['10K', '9K_PMS']:
+                self.play_mode = 'DP'
+            else:
+                self.play_mode = 'SP'
+    
+    def _detect_key_mode(self):
+        """
+        BMS 데이터에서 사용된 채널을 분석하여 키 모드를 감지하고
+        적절한 채널 → 열 매핑을 설정합니다.
+        
+        이 메서드는 _process_data 시작 시 호출되어야 합니다.
+        """
+        # 사용된 노트 채널 수집 (11-19, 21-29, 51-59, 61-69)
+        used_note_channels = set()
+        
+        for measure, channel, data in self.bms_data:
+            # 노트 채널인지 확인 (1x, 2x, 5x, 6x)
+            if channel.startswith('1') or channel.startswith('2') or \
+               channel.startswith('5') or channel.startswith('6'):
+                # 데이터가 비어있지 않은지 확인
+                total_objects = len(data) // 2
+                has_notes = any(data[i*2:i*2+2] != '00' for i in range(total_objects))
+                if has_notes:
+                    # LN 채널(5x, 6x)은 일반 채널(1x, 2x)로 변환하여 분석
+                    if channel.startswith('5'):
+                        base_ch = '1' + channel[1]
+                    elif channel.startswith('6'):
+                        base_ch = '2' + channel[1]
+                    else:
+                        base_ch = channel
+                    used_note_channels.add(base_ch)
+        
+        # 키 모드 패턴 매칭
+        # 사용된 채널을 모두 포함하는 가장 작은 패턴(키 개수가 작은 것) 선택
+        best_match = None
+        best_key_count = float('inf')  # 가장 작은 것 우선
+        
+        for pattern_channels, key_count, mode_name in self.key_mode_patterns:
+            # 사용된 채널이 패턴의 부분집합인지 확인
+            if used_note_channels.issubset(pattern_channels):
+                # 가장 작은 키 개수 우선 (더 정확한 매칭)
+                if key_count < best_key_count:
+                    best_match = mode_name
+                    best_key_count = key_count
+        
+        # 매칭되지 않으면 사용된 채널 수로 추정
+        if best_match is None:
+            # 2P 채널(21-29) 사용 여부로 DP/SP 구분
+            has_2p = any(ch.startswith('2') for ch in used_note_channels)
+            if has_2p:
+                # 사용된 채널 수로 키 모드 추정
+                total_channels = len(used_note_channels)
+                if total_channels >= 14:
+                    best_match = 'DP16'
+                    best_key_count = 16
+                elif total_channels >= 10:
+                    best_match = 'DP14'
+                    best_key_count = 14
+                else:
+                    best_match = '10K'
+                    best_key_count = 10
+            else:
+                # SP 모드: 사용된 채널 수로 키 모드 추정
+                if '16' in used_note_channels:  # 스크래치 있음
+                    if '18' in used_note_channels or '19' in used_note_channels:
+                        best_match = '7+1'
+                        best_key_count = 8
+                    else:
+                        best_match = '5+1'
+                        best_key_count = 6
+                else:  # 스크래치 없음
+                    total_channels = len(used_note_channels)
+                    if total_channels >= 7:
+                        best_match = '7K'
+                        best_key_count = 7
+                    elif total_channels >= 5:
+                        best_match = '5K'
+                        best_key_count = 5
+                    else:
+                        best_match = '4K'
+                        best_key_count = 4
+        
+        # 결과 저장
+        self.detected_mode = best_match
+        self.key_count = best_key_count
+        
+        # 채널 맵 설정
+        if best_match and best_match in self.key_mode_mappings:
+            base_map = self.key_mode_mappings[best_match]
+            self.channel_map = base_map.copy()
+            
+            # LN 채널 매핑 추가 (5x → 1x와 동일, 6x → 2x와 동일)
+            for ch, col in list(base_map.items()):
+                if ch.startswith('1'):
+                    ln_ch = '5' + ch[1]
+                    self.channel_map[ln_ch] = col
+                elif ch.startswith('2'):
+                    ln_ch = '6' + ch[1]
+                    self.channel_map[ln_ch] = col
+        else:
+            # Fallback 매핑 사용
+            self.channel_map = self.channel_map_fallback.copy()
+            self.key_count = 17 if any(ch.startswith('2') for ch in used_note_channels) else 8
 
 if __name__ == "__main__":
     # Test
@@ -338,6 +552,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         parser = BMSParser(sys.argv[1])
         notes = parser.parse()
+        print(f"Play Mode: {parser.play_mode}, Key Count: {parser.key_count}")
         print(f"Parsed {len(notes)} notes.")
         for n in notes[:10]:
             print(n)

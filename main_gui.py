@@ -11,6 +11,8 @@ import osu_parser
 import metric_calc
 import calc
 import hp_model
+import new_calc  # [NEW] Linear NPS Model
+import debug_osu_export  # [NEW] Debug OSU Export
 
 class BMSCalculatorApp:
     def __init__(self, root):
@@ -49,6 +51,8 @@ class BMSCalculatorApp:
         # Parameters
         self.auto_mode_var = tk.BooleanVar(value=True)
         self.uncap_level_var = tk.BooleanVar(value=False) # Uncap Level Mode
+        self.use_nps_linear_var = tk.BooleanVar(value=True) # [NEW] NPS Linear Model
+        self.debug_mode_var = tk.BooleanVar(value=True) # [NEW] Debug Mode - Default ON
         
         # Default Parameters (Manual Tuned)
         self.params_manual = {
@@ -97,6 +101,12 @@ class BMSCalculatorApp:
         # Apply optimized weights by default if not dev mode
         if not self.is_dev_mode:
             self.toggle_optimized_weights()
+        
+        # [NEW] Store parsed data for debug export
+        self.last_notes = None
+        self.last_metrics = None
+        self.last_file_path = None
+        self.last_key_count = None  # [NEW] 파서의 키 개수 저장
             
         self._create_widgets()
 
@@ -137,6 +147,7 @@ class BMSCalculatorApp:
         ttk.Entry(top_frame, textvariable=self.file_path, width=50).pack(side=tk.LEFT, padx=5)
         ttk.Button(top_frame, text="Browse", command=self.browse_file).pack(side=tk.LEFT)
         ttk.Button(top_frame, text="Calculate", command=self.calculate).pack(side=tk.LEFT, padx=20)
+        ttk.Button(top_frame, text="🔍 Debug OSU", command=self.export_debug_osu).pack(side=tk.LEFT, padx=5)
         
         # Middle Frame: Parameters and Results
         mid_frame = ttk.Frame(parent, padding="10")
@@ -217,19 +228,20 @@ class BMSCalculatorApp:
             opt_frame = ttk.Frame(guide_frame)
             opt_frame.pack(fill=tk.X, pady=10)
             
-            ttk.Checkbutton(opt_frame, text="최적화 가중치 사용 (권장)", variable=self.use_optimized_var, command=self.toggle_optimized_weights).pack(side=tk.LEFT, padx=10)
+            ttk.Checkbutton(opt_frame, text="NPS 선형 모델 (권장)", variable=self.use_nps_linear_var).pack(side=tk.LEFT, padx=10)
             ttk.Checkbutton(opt_frame, text="레벨 제한 해제 (25+)", variable=self.uncap_level_var).pack(side=tk.LEFT, padx=10)
             ttk.Checkbutton(opt_frame, text="초딸깍 모드 (요약 팝업)", variable=self.auto_mode_var).pack(side=tk.LEFT, padx=10)
+            ttk.Checkbutton(opt_frame, text="🔧 디버그 모드", variable=self.debug_mode_var).pack(side=tk.LEFT, padx=10)
                 
         # Results Group
-        self.result_text = tk.Text(mid_frame, height=10, width=40)
+        self.result_text = tk.Text(mid_frame, height=15, width=50, font=('Consolas', 10))
         self.result_text.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10)
         
         # Bottom Frame: Graph
         bottom_frame = ttk.Frame(parent, padding="10")
         bottom_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.fig, self.ax = plt.subplots(figsize=(8, 4))
+        self.fig, self.ax = plt.subplots(figsize=(8, 4), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.fig, master=bottom_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
@@ -287,6 +299,47 @@ class BMSCalculatorApp:
         filename = filedialog.askopenfilename(filetypes=[("Rhythm Game Files", "*.bms *.bme *.osu"), ("BMS Files", "*.bms *.bme"), ("Osu Files", "*.osu"), ("All Files", "*.*")])
         if filename:
             self.file_path.set(filename)
+    
+    def export_debug_osu(self):
+        """디버그용 OSU 파일 내보내기"""
+        if self.last_notes is None or self.last_metrics is None:
+            messagebox.showwarning("경고", "먼저 파일을 계산해주세요.\n(Calculate 버튼 클릭)")
+            return
+        
+        # 출력 디렉토리 선택
+        output_dir = filedialog.askdirectory(title="디버그 OSU 파일 저장 위치 선택")
+        if not output_dir:
+            return
+        
+        try:
+            self.status_var.set("디버그 OSU 파일 생성 중...")
+            self.root.update()
+            
+            # 여러 모드로 생성 (키 개수 전달)
+            debug_osu_export.export_multiple_modes(
+                self.last_notes,
+                self.last_metrics,
+                self.last_file_path,
+                output_dir,
+                key_count=self.last_key_count
+            )
+            
+            self.status_var.set("디버그 OSU 파일 생성 완료!")
+            messagebox.showinfo(
+                "완료",
+                f"디버그 OSU 파일이 생성되었습니다!\n\n"
+                f"위치: {output_dir}\n\n"
+                f"생성된 파일:\n"
+                f"- _DEBUG_local_nps.osu (로컬 NPS)\n"
+                f"- _DEBUG_jack.osu (Jack 밀도)\n"
+                f"- _DEBUG_chord.osu (Chord 밀도)\n"
+                f"- _DEBUG_hand.osu (Hand Strain)\n"
+                f"- _DEBUG_all.osu (모든 메트릭)\n\n"
+                f"오스 에디터에서 열어서 확인하세요!"
+            )
+        except Exception as e:
+            messagebox.showerror("오류", f"디버그 파일 생성 실패:\n{str(e)}")
+            self.status_var.set("오류 발생")
             
     def calculate(self):
         path = self.file_path.get()
@@ -334,6 +387,12 @@ class BMSCalculatorApp:
             # 2. Calculate Metrics
             metrics = metric_calc.calculate_metrics(notes, duration)
             
+            # [NEW] Store data for debug export
+            self.last_notes = notes
+            self.last_metrics = metrics
+            self.last_file_path = path
+            self.last_key_count = parser.key_count if hasattr(parser, 'key_count') else None
+            
             # Auto-fill Chart Metrics for HP Tab
             self.nps_peak.set(np.max(metrics['nps']))
             self.length_sec.set(duration)
@@ -366,43 +425,49 @@ class BMSCalculatorApp:
             
             # [NEW] Osu Offset
             is_osu = path.lower().endswith('.osu')
-            lvl_offset = 0.72 if is_osu else 0.0
             
-            if self.auto_mode_var.get():
-                # Auto Mode: Now just runs calculation once.
-                result = calc.compute_map_difficulty(
-                    metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
-                    metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
-                    metrics['chord_strain'], # [NEW]
-                    alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
-                    omega=p['omega'], # [NEW]
-                    lam_L=p['lam_L'], lam_S=p['lam_S'],
-                    w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
-                    a=p['a'], k=p['k'],
+            # [NEW] NPS Linear Model Branch
+            if self.use_nps_linear_var.get():
+                # Use new_calc.py linear model
+                result = new_calc.predict_from_notes(
+                    notes=notes,
                     duration=duration,
-                    s_offset=p['s_offset'],
-                    total_notes=len(notes),
-                    gamma_clear=p['gamma_clear'],
-                    cap_start=p['cap_start'], cap_range=p['cap_range'],
-                    uncap_level=self.uncap_level_var.get(),
-                    D_min=p['D_min'], # [NEW]
-                    D_max=p['D_max'], gamma_curve=p['gamma_curve'],
-                    level_offset=lvl_offset # [NEW]
+                    chord_mean=np.mean(metrics['chord_strain'])
                 )
                 
-                est_level = result['est_level']
-                extra_msg = f"(Direct D0 Mapping: Level {est_level})"
+                extra_msg = f"(NPS Linear: NPS={result['global_nps']:.1f}, std={result['nps_std']:.2f})"
                 
-                # Popup Alert for Super Simple Mode
-                popup_msg = f"이 패턴의 추정 레벨은 {est_level} 입니다."
-                messagebox.showinfo("초딸깍 요약", popup_msg)
+                # Build minimal result dict for compatibility
+                result_compat = {
+                    'F': np.sum(metrics['nps']),
+                    'P': np.max(metrics['nps']),
+                    'D0': result['global_nps'],  # Use NPS as D0
+                    'b_t': metrics['nps'],
+                    'ema_S': metrics['nps'],
+                    'ema_L': metrics['nps'],
+                    'est_level': result['level'],
+                    'pattern_level': result['level'],
+                    'level_label': result['label'],
+                    # [NEW] Include NPS metrics from new_calc
+                    'peak_nps': result['peak_nps'],
+                    'global_nps': result['global_nps'],
+                    'nps_std': result['nps_std']
+                }
+                result = result_compat
+                
+                if self.auto_mode_var.get():
+                    popup_msg = f"이 패턴의 추정 레벨은 {result['est_level']} 입니다."
+                    messagebox.showinfo("초딸깍 요약", popup_msg)
+            
             else:
+                # Legacy complex model
+                lvl_offset = 0.72 if is_osu else 0.0
                 result = calc.compute_map_difficulty(
                     metrics['nps'], metrics['ln_strain'], metrics['jack_pen'], 
                     metrics['roll_pen'], metrics['alt_cost'], metrics['hand_strain'],
-                    metrics['chord_strain'], # [NEW]
+                    metrics['chord_strain'],
                     alpha=p['alpha'], beta=p['beta'], gamma=p['gamma'], delta=p['delta'], eta=p['eta'], theta=p['theta'],
-                    omega=p['omega'], # [NEW]
+                    omega=p['omega'],
                     lam_L=p['lam_L'], lam_S=p['lam_S'],
                     w_F=p['w_F'], w_P=p['w_P'], w_V=p['w_V'],
                     a=p['a'], k=p['k'],
@@ -412,31 +477,165 @@ class BMSCalculatorApp:
                     gamma_clear=p['gamma_clear'],
                     cap_start=p['cap_start'], cap_range=p['cap_range'],
                     uncap_level=self.uncap_level_var.get(),
-                    D_min=p['D_min'], # [NEW]
+                    D_min=p['D_min'],
                     D_max=p['D_max'], gamma_curve=p['gamma_curve'],
-                    level_offset=lvl_offset # [NEW]
+                    level_offset=lvl_offset
                 )
-                extra_msg = ""
+                extra_msg = f"(Legacy Model: D0={result['D0']:.1f})"
+                
+                if self.auto_mode_var.get():
+                    popup_msg = f"이 패턴의 추정 레벨은 {result['est_level']} 입니다."
+                    messagebox.showinfo("초딸깍 요약", popup_msg)
             
             # 4. Display Results
+            # Calculate NPS statistics
+            import os
+            
+            # NPS Linear 모델 사용 시 new_calc의 Peak NPS 사용
+            if self.use_nps_linear_var.get() and 'peak_nps' in result:
+                global_nps = result['global_nps']
+                peak_nps = result['peak_nps']  # ±500ms Local NPS
+                avg_nps = np.mean(metrics['nps'])
+                nps_std = result['nps_std']
+            else:
+                # Legacy 모델 사용 시 기존 방식
+                global_nps = len(notes) / duration
+                avg_nps = np.mean(metrics['nps'])
+                peak_nps = np.max(metrics['nps'])  # 1초 윈도우 기준
+                nps_std = np.std(metrics['nps'])
+            
+            # Get key count
+            key_count = parser.key_count if hasattr(parser, 'key_count') else '?'
+            
             # Calculate HP9 Max Misses
             max_misses = hp_model.calculate_max_misses(len(notes))
             
-            res_str = f"Results for {path.split('/')[-1]}\n"
-            res_str += "-" * 30 + "\n"
-            res_str += f"Duration: {duration:.2f}s\n"
-            res_str += f"Notes: {len(notes)}\n"
-            res_str += f"Endurance (F): {result['F']:.2f}\n"
-            res_str += f"Burst Peak (P): {result['P']:.2f}\n"
-            res_str += f"Raw Difficulty (D0): {result['D0']:.2f}\n"
-            # res_str += f"Predicted Survival: {result['S_hat']:.2%}\n"
-            # res_str += f"Predicted S Rank (OD8): {result['S_rank_prob']:.2%}\n"
-            res_str += f"Estimated Level: {result['est_level']} ({result['level_label']})\n"
+            # Build result string with improved formatting
+            res_str = "═" * 50 + "\n"
+            res_str += f"📁 파일: {os.path.basename(path)}\n"
+            res_str += f"🎹 키모드: {key_count}K\n"
+            res_str += "═" * 50 + "\n\n"
+            
+            res_str += "📊 기본 지표\n"
+            res_str += "─" * 50 + "\n"
+            res_str += f"  총 노트수      : {len(notes):,}개\n"
+            res_str += f"  곡 길이        : {duration:.2f}초 ({duration/60:.2f}분)\n"
+            res_str += f"  Global NPS     : {global_nps:.2f}\n"
+            
+            # Peak NPS 표시 (모델에 따라 다른 설명)
+            if self.use_nps_linear_var.get():
+                res_str += f"  Peak NPS       : {peak_nps}개 (±500ms Local)\n"
+            else:
+                res_str += f"  Peak NPS       : {peak_nps:.2f} (1초 윈도우)\n"
+            
+            res_str += f"  평균 NPS       : {avg_nps:.2f}\n"
+            res_str += f"  NPS 표준편차   : {nps_std:.2f}\n\n"
+            
+            res_str += "🎯 난이도 분석\n"
+            res_str += "─" * 50 + "\n"
+            model_name = 'NPS Linear' if self.use_nps_linear_var.get() else 'Legacy Complex'
+            res_str += f"  사용 모델      : {model_name}\n"
+            res_str += f"  Endurance (F)  : {result['F']:.2f}\n"
+            res_str += f"  Burst Peak (P) : {result['P']:.2f}\n"
+            res_str += f"  Raw Diff (D0)  : {result['D0']:.2f}\n"
+            res_str += f"  추정 레벨      : {result['est_level']} ({result['level_label']})\n"
             if extra_msg:
-                res_str += f"{extra_msg}\n"
-            res_str += "-" * 30 + "\n"
-            res_str += f"HP9 Max Misses: {max_misses} (approx)\n"
-            res_str += "(Assuming rest are 300s)\n"
+                res_str += f"  {extra_msg}\n"
+            res_str += "\n"
+            
+            res_str += "💚 HP9 참고 정보\n"
+            res_str += "─" * 50 + "\n"
+            res_str += f"  최대 허용 미스 : ~{max_misses}개\n"
+            res_str += "  (나머지 모두 300s 가정)\n"
+            
+            # [NEW] Debug Mode: Show detailed metrics
+            if self.debug_mode_var.get():
+                res_str += "\n"
+                res_str += "🔧 디버그 정보 (상세)\n"
+                res_str += "═" * 50 + "\n\n"
+                
+                # Note type distribution
+                note_types = {}
+                for note in notes:
+                    note_type = note.get('type', 'unknown')
+                    note_types[note_type] = note_types.get(note_type, 0) + 1
+                
+                res_str += "📝 노트 타입 분포\n"
+                res_str += "─" * 50 + "\n"
+                for ntype, count in sorted(note_types.items()):
+                    percentage = (count / len(notes) * 100) if notes else 0
+                    res_str += f"  {ntype:15s}: {count:5,d}개 ({percentage:5.2f}%)\n"
+                res_str += "\n"
+                
+                # Metrics statistics
+                res_str += "📊 Metrics 통계\n"
+                res_str += "─" * 50 + "\n"
+                metric_names = ['nps', 'ln_strain', 'jack_pen', 'roll_pen', 'alt_cost', 'hand_strain', 'chord_strain']
+                for metric_name in metric_names:
+                    if metric_name in metrics:
+                        metric_values = metrics[metric_name]
+                        res_str += f"\n  {metric_name}:\n"
+                        res_str += f"    최소값    : {np.min(metric_values):.4f}\n"
+                        res_str += f"    최대값    : {np.max(metric_values):.4f}\n"
+                        res_str += f"    평균      : {np.mean(metric_values):.4f}\n"
+                        res_str += f"    중앙값    : {np.median(metric_values):.4f}\n"
+                        res_str += f"    표준편차  : {np.std(metric_values):.4f}\n"
+                res_str += "\n"
+                
+                # Window-by-window details (first 10 and last 10)
+                res_str += "🔍 윈도우별 상세 (처음 10개)\n"
+                res_str += "─" * 50 + "\n"
+                res_str += f"{'Win':>4s} {'NPS':>6s} {'LN':>6s} {'Jack':>6s} {'Roll':>6s} {'Alt':>6s} {'Hand':>6s} {'Chord':>6s}\n"
+                res_str += "─" * 50 + "\n"
+                for i in range(min(10, len(metrics['nps']))):
+                    res_str += f"{i:4d} "
+                    res_str += f"{metrics['nps'][i]:6.2f} "
+                    res_str += f"{metrics['ln_strain'][i]:6.2f} "
+                    res_str += f"{metrics['jack_pen'][i]:6.2f} "
+                    res_str += f"{metrics['roll_pen'][i]:6.2f} "
+                    res_str += f"{metrics['alt_cost'][i]:6.2f} "
+                    res_str += f"{metrics['hand_strain'][i]:6.2f} "
+                    res_str += f"{metrics['chord_strain'][i]:6.2f}\n"
+                
+                if len(metrics['nps']) > 20:
+                    res_str += "  ...\n"
+                    res_str += "\n🔍 윈도우별 상세 (마지막 10개)\n"
+                    res_str += "─" * 50 + "\n"
+                    res_str += f"{'Win':>4s} {'NPS':>6s} {'LN':>6s} {'Jack':>6s} {'Roll':>6s} {'Alt':>6s} {'Hand':>6s} {'Chord':>6s}\n"
+                    res_str += "─" * 50 + "\n"
+                    for i in range(max(0, len(metrics['nps'])-10), len(metrics['nps'])):
+                        res_str += f"{i:4d} "
+                        res_str += f"{metrics['nps'][i]:6.2f} "
+                        res_str += f"{metrics['ln_strain'][i]:6.2f} "
+                        res_str += f"{metrics['jack_pen'][i]:6.2f} "
+                        res_str += f"{metrics['roll_pen'][i]:6.2f} "
+                        res_str += f"{metrics['alt_cost'][i]:6.2f} "
+                        res_str += f"{metrics['hand_strain'][i]:6.2f} "
+                        res_str += f"{metrics['chord_strain'][i]:6.2f}\n"
+                
+                res_str += "\n"
+                
+                # Model parameters used
+                if not self.use_nps_linear_var.get():
+                    res_str += "⚙️ 사용된 모델 파라미터\n"
+                    res_str += "─" * 50 + "\n"
+                    p = {k: v.get() for k, v in self.params.items()}
+                    for key, value in sorted(p.items()):
+                        res_str += f"  {key:15s}: {value:.4f}\n"
+                    res_str += "\n"
+                
+                # Parser-specific info
+                res_str += "📄 파서 상세 정보\n"
+                res_str += "─" * 50 + "\n"
+                if hasattr(parser, 'header'):
+                    res_str += "  헤더 정보:\n"
+                    for key, value in list(parser.header.items())[:10]:
+                        res_str += f"    {key}: {value}\n"
+                if hasattr(parser, 'bpm_definitions') and parser.bpm_definitions:
+                    res_str += f"\n  BPM 정의: {len(parser.bpm_definitions)}개\n"
+                    for bpm_key, bpm_val in list(parser.bpm_definitions.items())[:5]:
+                        res_str += f"    {bpm_key}: {bpm_val}\n"
+                res_str += "\n"
             
             self.result_text.delete(1.0, tk.END)
             self.result_text.insert(tk.END, res_str)

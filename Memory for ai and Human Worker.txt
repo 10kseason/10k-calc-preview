@@ -23,3 +23,232 @@
 - Extended level range to 1-25 (added 'God' tier).
 - Implemented Binomial S-Rank model (note count dependent).
 - Added Gamma Clear (pessimistic adjustment) and Soft Cap (spike mitigation) layers.
+
+### Latest Progress (2025-11-29)
+- **Batch Verification & Tuning**:
+    - Analyzed `10Key-Revive-pack` (184 charts) -> MAE 2.01, Bias 0.17.
+    - **Action NPS**: Implemented in `metric_calc.py` to fix chord overestimation (10K/14K).
+    - **Weight Tuning**: `alpha=0.8` (NPS), `theta=0.5` (Hand), `eta=0.5` (Alt).
+    - **D0 Mapping**: Calibrated `D_max=75.0` (Level ≈ D0/3 + 1).
+- **Optimization**:
+    - Created `optimize_weights.py` to find optimal parameters using `scipy`.
+    - Expanded dataset to `10K2S` + `10Key-Revive-pack` (Total ~958 charts).
+    - Currently running baseline verification on combined dataset.
+
+### Latest Progress (2025-11-29) - Session 2
+- **UI Refinement**:
+    - Implemented Developer Mode (`--dev`) to hide advanced params from users.
+    - Restored "Optimized Weights", "Uncap Level", "Auto Mode" checkboxes in User Mode.
+- **Difficulty Model Refinement (In Progress)**:
+    - **Issue**: Previous model saturated D0, causing levels to clamp at 25.
+    - **Fixes Applied**:
+        - `calc.py`: `D_max=100`, `gamma=1.2`, Soft Clamp (>25), Density-normalized Length Bonus.
+        - `metric_calc.py`: Log-scaling for `chord_strain` (`np.log1p`).
+        - `optimize_weights.py`: 5-Fold CV, new bounds (`omega` 0.5~2.0).
+    - **Current Status**: Optimization run produced high MAE (~6.51).
+        - Suspect: `D_max` might be too low for the new log-scaled chord values, or `gamma` is too steep.
+        - `debug_calc.py` created to inspect D0 values but not yet run.
+
+### Next Steps (Handover)
+1. **Diagnose High MAE**:
+    - Run `debug_calc.py` to see actual D0 and Est Level values for sample charts.
+    - If D0 is too low (causing Level 1), decrease `D_max` or increase weights.
+    - If D0 is too high (causing Level 25+), increase `D_max` or decrease weights.
+2. **Re-run Optimization**:
+    - Adjust bounds in `optimize_weights.py` based on diagnosis.
+    - Run `python optimize_weights.py` again.
+3. **Finalize**:
+    - Update `main_gui.py` with the new best parameters.
+    - Verify with `verify_batch_levels.py`.
+
+### Future Ideas & Suggestions
+- **Difficulty Calculation Simplification**:
+    - Suggestion: Start with `nps = total note count / song length` as the easiest difficulty metric.
+    - Investigation: Check if the difficulty difference between BMS and osu! stems from NPS.
+    - Context: User request "나중에 계산기 수정할때 기억해줘?" (Remember this for when we modify the calculator later).
+
+### BMS 전용 정확도 개선 (2025-12-08)
+- **핵심 발견**: BMS 데이터 1759개 분석 결과, **NPS 선형 회귀가 가장 정확**
+  - NPS Linear: `level = 0.6963 * NPS + 1.6395`, **MAE 1.55** (R²=0.55)
+  - 모델 기반 최적화: MAE 2.92 (NPS보다 저조)
+- **Feature Ablation 결과** (MAE):
+  - NPS+chord: 2.19 (최선)
+  - NPS+hand: 2.32
+  - NPS only: 2.55
+  - All features: 2.77 (과적합)
+  - 현재 모델(final_params.json): 34.08 (파라미터 불일치)
+- **결론**: BMS 난이도 예측에서 복잡한 모델보다 단순 NPS 회귀가 더 효과적
+- **생성된 파일**:
+  - `run_bms_only_analysis.py` - BMS 전용 분석
+  - `ablation_study.py` - 피처 기여도 분석
+  - `optimize_bms_only.py` - BMS 전용 최적화
+  - `bms_final_params.json` - 최적화 결과 (MAE 2.92)
+  - `ablation_results.json` - Ablation Study 결과
+
+### NPS 표준화 검증 (2025-12-08)
+- **목적**: BMS와 OSU 파서 간 NPS 계산 일관성 확인
+- **테스트 파일**: `문제분석용` 폴더의 CircusGalop [10K HELL CIRCUS]
+  - BMS 파일: 12,326개 노트, 238.20초, NPS 51.75
+  - OSU 파일: 12,326개 노트, 238.20초, NPS 51.75
+  - **결과**: ✅ 완벽한 일치 (노트수 차이 0개, NPS 차이 0.00)
+- **검증 내용**:
+  - 두 파서 모두 Long Note(LN)를 2개 노트(시작/끝 마커)로 계산
+  - 곡 길이를 첫 노트~마지막 노트 시간으로 일관되게 계산
+  - 이전 대화(fce5e1ec)에서 구현한 NPS 표준화 작업 성공 확인
+- **생성된 파일**:
+  - `analyze_nps_test_files.py` - NPS 테스트 파일 자동 분석 스크립트
+
+### GUI NPS 표시 및 UI 개선 (2025-12-08)
+- **목적**: main_gui.py에 파서 원시 NPS 정보 추가 및 사용자 경험 개선
+- **주요 변경사항**:
+  - 결과 패널에 "기본 지표" 섹션 추가 (Global NPS, 평균 NPS, Peak NPS, NPS 표준편차)
+  - 고정폭 폰트(Consolas) 적용으로 숫자 정렬 개선
+  - 유니코드 박스 문자(═, ─) 및 이모지 아이콘으로 섹션 구분 강화
+  - 결과 텍스트 박스 크기 확대 (10→15 height, 40→50 width)
+  - 그래프 DPI 100 설정으로 선명도 향상
+- **효과**: 
+  - 파서 원시값과 모델 계산값 직접 비교 가능
+  - 가독성 대폭 향상으로 정보 파악 용이
+  - 전문적이면서도 친근한 UI 제공
+- **테스트**: 10e.bms로 검증 완료, 모든 기능 정상 작동 확인
+
+### 디버그 모드 추가 (2025-12-08)
+- **목적**: GUI에서 상세한 디버깅 정보를 확인할 수 있는 기능 추가
+- **구현 내용**:
+  - User Options에 "🔧 디버그 모드" 체크박스 추가
+  - 디버그 모드 활성화 시 다음 정보 표시:
+    * 📝 노트 타입 분포 (ln_start, ln_end, note 등)
+    * 📊 모든 Metrics 통계 (최소/최대/평균/중앙값/표준편차)
+    * 🔍 윈도우별 상세 정보 (처음 10개, 마지막 10개)
+    * ⚙️ 사용된 모델 파라미터 (Legacy 모델 사용 시)
+    * 📄 파서 상세 정보 (헤더, BPM 정의 등)
+- **활용**: 
+  - 난이도 계산 문제 진단
+  - Metric 값 검증
+  - 파일 파싱 오류 디버깅
+  - 모델 파라미터 확인
+
+### new_calc.py 모듈 생성 및 통합 (2025-12-08)
+- **목적**: 선형 회귀 NPS 모델을 독립 모듈로 분리하여 재사용성 향상
+- **주요 기능**:
+  - `predict_level_linear()`: 3-feature 선형 회귀 (global_nps, nps_std, chord_mean)
+  - `predict_level_simple()`: 단순 NPS 선형 회귀
+  - `predict_from_notes()`: 노트 데이터에서 직접 레벨 예측
+  - `get_level_label()`: 레벨을 티어 레이블로 변환
+  - `calculate_nps_metrics()`: NPS 관련 메트릭 자동 계산
+  - `compare_models()`: 두 모델 비교 유틸리티
+- **모델 파라미터** (NPS_LINEAR_PARAMS):
+  - intercept: -0.1879
+  - coef_nps: 0.2053
+  - coef_std: 0.9999
+  - coef_chord: 3.2741
+  - BMS 1759개 기준 MAE 1.12
+- **main_gui.py 통합**:
+  - new_calc 모듈 임포트
+  - 하드코딩된 nps_linear_params 제거
+  - predict_from_notes() 함수로 레벨 계산
+  - 코드 간결화 및 유지보수성 향상
+- **효과**:
+  - 다른 스크립트에서도 선형 모델 쉽게 사용 가능
+  - 중복 코드 제거
+  - 모델 파라미터 중앙 관리
+
+### 로컬 NPS 계산 방식 변경 (2025-12-08)
+- **목적**: Peak NPS를 더 정확하게 측정하기 위해 로컬 NPS 계산 방식 개선
+- **변경 내용**:
+  - **Global NPS**: 총 노트수 / 곡 길이 (유지)
+  - **Local NPS**: 각 노트를 중심으로 ±500ms 구간 내 노트 개수 (신규)
+  - **Peak NPS**: 모든 로컬 NPS 중 최대값 (신규)
+  - **NPS std**: 1초 윈도우별 NPS의 표준편차 (유지)
+- **구현 위치**: `new_calc.py`의 `calculate_nps_metrics()` 함수
+- **검증**:
+  - XRATE 파일: Peak NPS = 100 ✅
+  - CircusGalop: Peak NPS = 176
+- **효과**:
+  - 순간 최대 밀도를 더 정확하게 측정
+  - 노트 중심 기준으로 국지적 난이도 파악
+  - 기존 1초 윈도우 방식보다 정밀한 Peak 감지
+
+### 디버그 OSU 내보내기 기능 추가 (2025-12-08)
+- **목적**: 각 노트의 메트릭 값을 오스 에디터에서 시각적으로 확인
+- **구현 내용**:
+  - `debug_osu_export.py`: 디버그용 .osu 파일 생성 모듈
+  - 각 노트의 메트릭 값을 키음 파일명으로 표시
+    * `n12.wav`: Local NPS = 12
+    * `j16.50.wav`: Jack = 16.50
+    * `c3.14.wav`: Chord = 3.14
+  - 5가지 모드로 생성:
+    * local_nps: 로컬 NPS (±500ms)
+    * jack: Jack 밀도
+    * chord: Chord strain
+    * hand: Hand strain
+    * all: 모든 메트릭 (n12_j16_c3.1)
+  - GUI에 "🔍 Debug OSU" 버튼 추가
+- **사용법**:
+  1. 파일 계산 (Calculate 버튼)
+  2. Debug OSU 버튼 클릭
+  3. 저장 위치 선택
+  4. 생성된 .osu 파일을 오스 에디터에서 열어 메트릭 확인
+- **효과**:
+  - 노트별 메트릭을 시각적으로 디버깅
+  - 문제 구간을 한눈에 파악
+  - 모델 검증 및 튜닝에 유용
+
+### 핵심 로직 문서화 (2025-12-08)
+- **목적**: BMS/OSU 파서 및 new_calc 모듈의 절대 기준 로직을 문서화
+- **생성 문서**: `docs/core_logic_reference.md`
+- **문서 내용**:
+  1. **BMS 파서 채널 매핑**: 11-19, 21-29, 51-59, 61-69 채널 → 열(column) 매핑
+  2. **OSU 파서 열 계산**: floor(x * key_count / 512) + 1
+  3. **NPS 계산 표준**:
+     - Global NPS = total_notes / duration
+     - Local NPS = 각 노트 중심 ±500ms 구간 내 노트 개수
+     - Peak NPS = max(Local NPS)
+     - NPS std = 1초 윈도우별 NPS 표준편차
+  4. **노트 타입 정의**: note, ln_start, ln_end, ln_marker
+  5. **선형 모델 파라미터**: intercept=-0.1879, coef_nps=0.2053, coef_std=0.9999, coef_chord=3.2741
+
+### BMS 키 모드 자동 감지 구현 (2025-12-10)
+- **목적**: 다양한 BMS 키 모드(4K~16K)를 자동 감지하고 올바른 열 매핑 적용
+- **주요 변경**:
+  1. **키 모드 패턴 테이블** (`bms_parser.py`):
+     - 4K, 5K, 5+1, 6K, 7K, 7+1, 9K_PMS, 10K, DP12, DP14, DP16
+     - 사용된 채널 패턴으로 가장 작은 superset 매칭
+  2. **키 모드별 열 매핑**:
+     - 모든 키 모드에서 열은 1-indexed (1부터 시작)
+     - LN 채널(5x/6x)은 자동으로 일반 채널(1x/2x)과 동일 열 매핑
+  3. **감지 로직** (`_detect_key_mode()` 메서드):
+     - `_process_data()` 시작 시 호출
+     - `detected_mode`, `key_count`, `play_mode` 속성 설정
+- **debug_osu_export.py 수정**:
+  1. **key_count 파라미터** 추가 (파서에서 전달)
+  2. **x 좌표 계산** 수정: 모든 키 모드에서 `column - 1`로 0-indexed 변환
+  3. **CircleSize** 동적 설정 (key_count에 맞게)
+  4. **롱노트 머리/꼬리 메트릭 분리 표시**: `Hn12_Tn15.wav` 형식
+- **테스트 결과**:
+  - XRATE: DP12 (12키) ✅
+  - test_sample.bms: 5K (5키) ✅
+- **문서 업데이트**: `docs/core_logic_reference.md`에 키 모드 감지 로직 반영
+
+### NPS 계산 부동소수점 오차 방지 (2025-12-10)
+- **문제점**: Local NPS 계산 시 `t + 0.5`(500ms) 조건에서 부동소수점 오차로 인해
+  - 실제로 같은 시간(t+500ms)인 노트가 "보다 작다(<)" 조건에 포함되는 현상 발생
+  - BMS와 OSU 간 NPS 결과 불일치 가능성
+- **해결 방법**:
+  1. **노트 시간 반올림**: `round(time, 3)` - ms 단위로 반올림하여 부동소수점 오차 제거
+  2. **윈도우 경계 조정**: `window_end = t + 0.499999999999` + `<=` 비교 사용
+- **수정된 파일**:
+  - `bms_parser.py`: 노트 생성 시 `round(current_time, 3)` 적용 (351, 358번 라인)
+  - `osu_parser.py`: 노트 생성 시 `round(time_ms / 1000.0, 3)` 적용 (86-88, 92, 105번 라인)
+  - `new_calc.py`: Local NPS 계산에서 `round(note['time'], 3)` 및 `window_end = t + 0.499999999999` 적용
+  - `debug_osu_export.py`: Local NPS 계산 로직 동일 수정
+  - `test_local_nps.py`, `test_xrate_peak.py`: 테스트 스크립트 동일 수정
+- **검증 결과** (CircusGalop BMS vs OSU):
+  - 노트수: 12,326 vs 12,326 ✅
+  - 시간 차이: 0.0ms ✅
+  - NPS 표준편차: 27.6422 vs 27.6422 ✅
+  - Peak NPS: 176 vs 176 ✅
+- **효과**:
+  - BMS/OSU 간 NPS 계산 완벽 일치
+  - 부동소수점 오차로 인한 1초 윈도우 경계 밀림 문제 해결
+
